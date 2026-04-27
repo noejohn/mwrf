@@ -1,0 +1,135 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MWRF Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <div class="brand-title">Sagrex Foods</div>
+                <div class="brand-subtitle">Machine Work RF</div>
+            </div>
+
+            <nav class="menu">
+                <div class="menu-heading">GENERAL</div>
+                {% if permissions.can_view_dashboard %}
+                    <a href="{% url 'core:dashboard_home' %}" class="menu-item {% if active_page == 'home' %}active{% endif %}">Home</a>
+                {% endif %}
+                <a href="{% url 'core:profile_settings' %}" class="menu-item {% if active_page == 'profile' %}active{% endif %}">Settings</a>
+                {% if permissions.can_manage_users %}
+                    <a href="{% url 'core:entity_list' entity='users' %}" class="menu-item {% if active_page == 'users' %}active{% endif %}">Users</a>
+                {% endif %}
+                {% if permissions.can_manage_personnel %}
+                    <a href="{% url 'core:entity_list' entity='personnel' %}" class="menu-item {% if active_page == 'personnel' %}active{% endif %}">Personnel</a>
+                {% endif %}
+                {% if permissions.can_manage_departments %}
+                    <a href="{% url 'core:entity_list' entity='departments' %}" class="menu-item {% if active_page == 'department' %}active{% endif %}">Department</a>
+                {% endif %}
+                {% if permissions.can_manage_machines %}
+                    <a href="{% url 'core:entity_list' entity='machines' %}" class="menu-item {% if active_page == 'machine' %}active{% endif %}">Machine</a>
+                {% endif %}
+                {% if permissions.can_manage_worktypes %}
+                    <a href="{% url 'core:entity_list' entity='work-types' %}" class="menu-item {% if active_page == 'worktype' %}active{% endif %}">Work Type</a>
+                {% endif %}
+
+                {% if permissions.can_manage_approvals or permissions.can_manage_statuses or permissions.can_view_requests %}
+                    <div class="menu-heading">REQUESTS</div>
+                {% endif %}
+                {% if permissions.can_manage_approvals %}
+                    <a href="{% url 'core:entity_list' entity='approvals' %}" class="menu-item {% if active_page == 'approval' %}active{% endif %}">Approval</a>
+                {% endif %}
+                {% if permissions.can_manage_statuses %}
+                    <a href="{% url 'core:entity_list' entity='statuses' %}" class="menu-item {% if active_page == 'status' %}active{% endif %}">Status</a>
+                {% endif %}
+                {% if permissions.can_view_requests %}
+                    <a href="{% url 'core:request_list' %}" class="menu-item {% if active_page == 'allrequest' %}active{% endif %}">All Request</a>
+                    {% if permissions.can_request_action %}
+                        <a href="{% url 'core:request_list_filtered' filter_key='current' %}" class="menu-item {% if active_page == 'current' %}active{% endif %}">Current</a>
+                        <a href="{% url 'core:request_list_filtered' filter_key='on-going' %}" class="menu-item {% if active_page == 'on-going' %}active{% endif %}">On-going</a>
+                        <a href="{% url 'core:request_list_filtered' filter_key='verification' %}" class="menu-item {% if active_page == 'verification' %}active{% endif %}">Verification</a>
+                        <a href="{% url 'core:request_list_filtered' filter_key='done' %}" class="menu-item {% if active_page == 'done' %}active{% endif %}">Done</a>
+                        <a href="{% url 'core:request_list_filtered' filter_key='rejected' %}" class="menu-item {% if active_page == 'rejected' %}active{% endif %}">Rejected</a>
+                        <a href="{% url 'core:request_list_filtered' filter_key='backjob' %}" class="menu-item {% if active_page == 'backjob' %}active{% endif %}">Back Job</a>
+                    {% endif %}
+                {% endif %}
+            </nav>
+
+            <div class="sidebar-footer">
+                <span>{{ current_user.name|default:'Super Admin' }}</span>
+                <a href="{% url 'logout' %}" id="logoutLink">Logout</a>
+            </div>
+        </aside>
+
+        <main class="main-panel">
+            {% if messages %}
+                <div class="messages">
+                    {% for message in messages %}
+                        <div class="message">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <div class="logout-modal" id="logoutModal" hidden>
+        <div class="logout-backdrop" id="logoutBackdrop"></div>
+        <div class="logout-dialog" role="dialog" aria-modal="true" aria-labelledby="logoutTitle">
+            <h3 id="logoutTitle">Confirm Logout</h3>
+            <p>Are you sure you want to logout?</p>
+            <div class="logout-actions">
+                <button type="button" class="btn" id="logoutCancelBtn">Cancel</button>
+                <button type="button" class="btn btn-primary" id="logoutConfirmBtn">Logout</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const logoutLink = document.getElementById("logoutLink");
+            const modal = document.getElementById("logoutModal");
+            const backdrop = document.getElementById("logoutBackdrop");
+            const cancelBtn = document.getElementById("logoutCancelBtn");
+            const confirmBtn = document.getElementById("logoutConfirmBtn");
+
+            if (!logoutLink || !modal || !cancelBtn || !confirmBtn) return;
+
+            const logoutUrl = logoutLink.getAttribute("href");
+
+            function openModal() {
+                modal.hidden = false;
+            }
+
+            function closeModal() {
+                modal.hidden = true;
+            }
+
+            logoutLink.addEventListener("click", function (event) {
+                event.preventDefault();
+                openModal();
+            });
+
+            cancelBtn.addEventListener("click", closeModal);
+            if (backdrop) backdrop.addEventListener("click", closeModal);
+            document.addEventListener("keydown", function (event) {
+                if (event.key === "Escape" && !modal.hidden) {
+                    closeModal();
+                }
+            });
+
+            confirmBtn.addEventListener("click", function () {
+                window.location.href = logoutUrl;
+            });
+        })();
+    </script>
+</body>
+</html>

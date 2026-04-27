@@ -1,0 +1,394 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MWRF Register</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --page-bg: #070d15;
+            --card-bg: #1c242d;
+            --brand-green: #17643f;
+            --field-border: #4a5963;
+            --muted: #a7b4b0;
+            --danger: #ff8f8f;
+            --ok: #8de7b4;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            position: relative;
+            background-color: var(--page-bg);
+            font-family: "Manrope", "Segoe UI", sans-serif;
+            color: #ecf2ef;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background-color: var(--page-bg);
+            background-image:
+                linear-gradient(rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0.45)),
+                url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSczNjAnIGhlaWdodD0nMzYwJyB2aWV3Qm94PScwIDAgMzYwIDM2MCc+CiAgPGcgZmlsbD0nbm9uZScgc3Ryb2tlPScjMDM2ZTNhJyBzdHJva2Utd2lkdGg9JzQnIHN0cm9rZS1saW5lY2FwPSdyb3VuZCcgc3Ryb2tlLWxpbmVqb2luPSdyb3VuZCcgb3BhY2l0eT0nMC45Jz4KICAgIDxwYXRoIGQ9J00zMCA2NWM0Mi00MCA5Ni0zNCAxMjQgMjMnLz4KICAgIDxwYXRoIGQ9J000NyA4NGMzMy0yOSA3MC0yNCA5MSAxOCcvPgogICAgPHBhdGggZD0nTTk4IDEwMGwxNiA3Jy8+CgogICAgPHBhdGggZD0nTTIyMCA0MGMzNC0yOSA3OS0yNiA5OSAxNicvPgogICAgPHBhdGggZD0nTTIzNCA1NmMyNy0yMiA1OC0xOSA3NCAxMycvPgoKICAgIDxwYXRoIGQ9J00yNTAgMTQyYzQ1LTM3IDk1LTMwIDEyMCAyNCcvPgogICAgPHBhdGggZD0nTTI2OCAxNjJjMzUtMjggNzItMjQgOTAgMTknLz4KCiAgICA8cGF0aCBkPSdNMjggMjIyYzQ3LTM4IDk5LTMxIDEyNCAyNCcvPgogICAgPHBhdGggZD0nTTQ1IDI0MWMzNi0yOSA3My0yNCA5MiAxOCcvPgoKICAgIDxwYXRoIGQ9J00xNjYgMjI2YzQwLTM0IDg2LTI5IDEwOSAyMCcvPgogICAgPHBhdGggZD0nTTE4MiAyNDRjMzEtMjUgNjQtMjEgODEgMTQnLz4KCiAgICA8cGF0aCBkPSdNMTQwIDMyMmM0MC0zNCA4OC0yOSAxMTIgMjMnLz4KICAgIDxwYXRoIGQ9J00xNTYgMzQxYzMxLTI1IDY2LTIxIDg0IDE1Jy8+CgogICAgPHBhdGggZD0nTTI4MiAyODVjMzItMjcgNzItMjMgOTEgMTQnLz4KICAgIDxwYXRoIGQ9J00yOTYgMzAwYzI0LTIwIDUzLTE3IDY3IDExJy8+CiAgPC9nPgo8L3N2Zz4=");
+            background-size: auto, 360px 360px;
+            background-position: center, center;
+            background-repeat: no-repeat, repeat;
+        }
+
+        .page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px 12px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .card {
+            width: min(620px, 96vw);
+            background: var(--card-bg);
+            border-radius: 28px;
+            overflow: hidden;
+            box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45);
+            animation: rise 450ms ease-out;
+            border: 1px solid #33404b;
+        }
+
+        @keyframes rise {
+            from {
+                transform: translateY(12px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .hero {
+            background: var(--brand-green);
+            padding: 14px 22px;
+        }
+
+        .hero-brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo-tile {
+            width: 102px;
+            height: 102px;
+            background: #f2f2f2;
+            border-radius: 15px;
+            display: grid;
+            place-items: center;
+        }
+
+        .logo-image {
+            width: 82px;
+            height: 82px;
+            object-fit: contain;
+        }
+
+        .hero-saba {
+            width: min(68%, 330px);
+            max-width: 100%;
+            filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.2));
+        }
+
+        .form-wrap {
+            padding: 20px 22px 24px;
+        }
+
+        .field-grid {
+            display: grid;
+            grid-template-columns: 122px 1fr;
+            gap: 8px 10px;
+            align-items: center;
+        }
+
+        .field-grid label {
+            font-weight: 700;
+        }
+
+        .field-grid input,
+        .field-grid select {
+            height: 36px;
+            border: 1px solid var(--field-border);
+            border-radius: 6px;
+            padding: 0 9px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            background: #252f38;
+            color: #f4f6f7;
+        }
+
+        .readonly {
+            color: var(--muted);
+            background: #2a333c;
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 18px;
+        }
+
+        .actions button {
+            min-width: 116px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid var(--field-border);
+            font-family: inherit;
+            font-weight: 700;
+            cursor: pointer;
+            background: #2a333d;
+            color: #ebf0ee;
+        }
+
+        .btn-save {
+            background: var(--brand-green);
+            border-color: var(--brand-green);
+            color: #fff;
+        }
+
+        .consent {
+            margin-top: 14px;
+            border-top: 1px solid #33414c;
+            padding-top: 12px;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            font-size: 0.9rem;
+            line-height: 1.35;
+        }
+
+        .consent input {
+            margin-top: 4px;
+        }
+
+        .error {
+            color: var(--danger);
+            font-weight: 700;
+            text-align: center;
+            margin: 10px 0 0;
+            font-size: 0.92rem;
+        }
+
+        .success {
+            color: var(--ok);
+            font-weight: 700;
+            text-align: center;
+            margin: 10px 0 0;
+            font-size: 0.92rem;
+            line-height: 1.4;
+        }
+
+        .bottom-link {
+            margin-top: 12px;
+            text-align: center;
+            font-weight: 700;
+        }
+
+        .bottom-link a {
+            color: #80d9a7;
+        }
+
+        @media (max-width: 620px) {
+            .field-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-brand {
+                flex-direction: column;
+                justify-content: center;
+            }
+
+            .hero-saba {
+                width: min(82vw, 300px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="text/babel">
+        const departments = {{ departments_json|safe }};
+
+        function RegisterPage() {
+            const [form, setForm] = React.useState({
+                fullname: "",
+                department: departments[0] || "",
+                address: "",
+                contact: "",
+                consent: false,
+            });
+            const [error, setError] = React.useState("");
+            const [success, setSuccess] = React.useState("");
+            const [saving, setSaving] = React.useState(false);
+
+            const updateField = (key, value) => {
+                setForm((prev) => ({ ...prev, [key]: value }));
+            };
+
+            const clearForm = () => {
+                setForm({
+                    fullname: "",
+                    department: departments[0] || "",
+                    address: "",
+                    contact: "",
+                    consent: false,
+                });
+                setError("");
+                setSuccess("");
+            };
+
+            const onSubmit = async (event) => {
+                event.preventDefault();
+                setError("");
+                setSuccess("");
+
+                if (!form.fullname || !form.department || !form.address || !form.contact) {
+                    setError("All fields are required.");
+                    return;
+                }
+                if (!form.consent) {
+                    setError("Please accept the privacy consent first.");
+                    return;
+                }
+
+                setSaving(true);
+                try {
+                    const response = await fetch("{% url 'register_api' %}", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(form),
+                    });
+                    const data = await response.json();
+                    if (!response.ok || !data.ok) {
+                        setError(data.message || "Registration failed.");
+                        return;
+                    }
+                    setSuccess(
+                        `${data.message} Username: ${data.username} | Temporary Password: ${data.temp_password}`
+                    );
+                    clearForm();
+                } catch (err) {
+                    setError("Unable to connect to server.");
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            return (
+                <main className="page">
+                    <section className="card">
+                        <header className="hero">
+                            <div className="hero-brand">
+                                <div className="logo-tile">
+                                    <img className="logo-image" src="{% static 'images/SFILogo.jpg' %}" alt="SFI logo" />
+                                </div>
+                                <img className="hero-saba" src="{% static 'images/GoldenSabaLogo.png' %}" alt="Golden Saba logo" />
+                            </div>
+                        </header>
+
+                        <form className="form-wrap" onSubmit={onSubmit}>
+                            <div className="field-grid">
+                                <label htmlFor="fullname">Full Name</label>
+                                <input
+                                    id="fullname"
+                                    value={form.fullname}
+                                    onChange={(e) => updateField("fullname", e.target.value)}
+                                    maxLength={50}
+                                />
+
+                                <label htmlFor="department">Department</label>
+                                <select
+                                    id="department"
+                                    value={form.department}
+                                    onChange={(e) => updateField("department", e.target.value)}
+                                >
+                                    {departments.length === 0 && <option value="">No departments found</option>}
+                                    {departments.map((dep) => (
+                                        <option key={dep} value={dep}>{dep}</option>
+                                    ))}
+                                </select>
+
+                                <label htmlFor="address">Address</label>
+                                <input
+                                    id="address"
+                                    value={form.address}
+                                    onChange={(e) => updateField("address", e.target.value)}
+                                    maxLength={25}
+                                />
+
+                                <label htmlFor="contact">Contact</label>
+                                <input
+                                    id="contact"
+                                    value={form.contact}
+                                    onChange={(e) => updateField("contact", e.target.value)}
+                                    maxLength={15}
+                                />
+
+                                <label htmlFor="role">Role</label>
+                                <input id="role" className="readonly" value="USER" readOnly />
+
+                                <label htmlFor="status">Status</label>
+                                <input id="status" className="readonly" value="INACTIVE" readOnly />
+                            </div>
+
+                            <div className="actions">
+                                <button type="submit" className="btn-save" disabled={saving}>
+                                    {saving ? "Saving..." : "Save"}
+                                </button>
+                                <button type="button" onClick={clearForm}>Clear</button>
+                            </div>
+
+                            <label className="consent">
+                                <input
+                                    type="checkbox"
+                                    checked={form.consent}
+                                    onChange={(e) => updateField("consent", e.target.checked)}
+                                />
+                                <span>
+                                    I have read about the Data Privacy Statement as well as the SFI Centralized System
+                                    Privacy Policy and expressly consent to processing my personal data for system
+                                    operation and records management.
+                                </span>
+                            </label>
+
+                            {error && <p className="error">{error}</p>}
+                            {success && <p className="success">{success}</p>}
+
+                            <div className="bottom-link">
+                                <a href="{% url 'login' %}">Back to Login</a>
+                            </div>
+                        </form>
+                    </section>
+                </main>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<RegisterPage />);
+    </script>
+</body>
+</html>

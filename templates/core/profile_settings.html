@@ -1,0 +1,78 @@
+{% extends "core/base.html" %}
+
+{% block content %}
+<section class="page-card profile-page">
+    <header class="page-header split">
+        <h1>PROFILE SETTINGS</h1>
+        <span class="subtitle">Manage your account</span>
+    </header>
+
+    <div class="profile-grid">
+        <section class="panel-card profile-card">
+            <div class="profile-hero">
+                {% if profile_image_data %}
+                    <img src="{{ profile_image_data }}" alt="Profile image" class="profile-avatar">
+                {% else %}
+                    <div class="profile-avatar profile-avatar-fallback">{{ profile_initial }}</div>
+                {% endif %}
+                <div>
+                    <h2>{{ current_user.name }}</h2>
+                    <p>@{{ current_user.username }}</p>
+                    <small>{{ current_user.userposition }} · {{ current_user.userstatus }}</small>
+                </div>
+            </div>
+
+            <form method="post" enctype="multipart/form-data" class="crud-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="profile">
+                {% for field in profile_form %}
+                    <label class="field-label">
+                        <span>{{ field.label }}</span>
+                        {{ field }}
+                        {% if field.errors %}
+                            <small class="field-error">{{ field.errors|striptags }}</small>
+                        {% endif %}
+                    </label>
+                {% endfor %}
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save Profile</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="panel-card profile-card">
+            <h3>Change Password</h3>
+            <form method="post" class="crud-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="password">
+                {% for field in password_form %}
+                    <label class="field-label">
+                        <span>{{ field.label }}</span>
+                        {{ field }}
+                        {% if field.errors %}
+                            <small class="field-error">{{ field.errors|striptags }}</small>
+                        {% endif %}
+                    </label>
+                {% endfor %}
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Update Password</button>
+                </div>
+            </form>
+
+            <div class="profile-readonly">
+                <h3>Account Details</h3>
+                <div class="profile-readonly-grid">
+                    <span>User ID</span><strong>{{ current_user.userid }}</strong>
+                    <span>Name</span><strong>{{ current_user.name }}</strong>
+                    <span>Username</span><strong>{{ current_user.username }}</strong>
+                    <span>Department</span><strong>{{ current_user.userdepartment }}</strong>
+                    <span>Address</span><strong>{{ current_user.useraddress }}</strong>
+                    <span>Contact</span><strong>{{ current_user.usercontact }}</strong>
+                    <span>Position</span><strong>{{ current_user.userposition }}</strong>
+                    <span>Status</span><strong>{{ current_user.userstatus }}</strong>
+                </div>
+            </div>
+        </section>
+    </div>
+</section>
+{% endblock %}

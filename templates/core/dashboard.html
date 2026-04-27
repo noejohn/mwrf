@@ -1,0 +1,114 @@
+{% extends "core/base.html" %}
+
+{% block content %}
+{{ dashboard_ui|json_script:"dashboard-ui-data" }}
+<div id="dashboardRoot"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+    (function () {
+        const dashboardData = JSON.parse(document.getElementById("dashboard-ui-data").textContent);
+
+        function MetricCard({ label, value, tone }) {
+            const className = tone ? `metric-count ${tone}` : "metric-count";
+            return (
+                <div className="metric-card">
+                    <div className={className}>{value}</div>
+                    <div className="metric-label">{label}</div>
+                </div>
+            );
+        }
+
+        function DashboardPage({ data }) {
+            const metricCards = [
+                { label: "ALL REQUEST", value: data.counts.all, tone: "" },
+                { label: "NEW", value: data.counts.new, tone: "blue" },
+                { label: "ON-GOING", value: data.counts.on_going, tone: "yellow" },
+                { label: "FOR VERIFICATION", value: data.counts.verification, tone: "green-dark" },
+                { label: "DONE", value: data.counts.done, tone: "green" },
+                { label: "REJECTED", value: data.counts.rejected, tone: "red" },
+            ];
+
+            return (
+                <section className="page-card">
+                    <header className="page-header">
+                        <h1>DASHBOARD</h1>
+                    </header>
+
+                    <div className="section-title">Request overview</div>
+                    <div className="metric-grid">
+                        {metricCards.map((item) => (
+                            <MetricCard key={item.label} label={item.label} value={item.value} tone={item.tone} />
+                        ))}
+                    </div>
+
+                    <div className="overview-grid">
+                        <section className="panel-card">
+                            <h3>REQUEST BY STATUS</h3>
+                            <div className="status-list">
+                                {data.statusRows.map((row) => (
+                                    <div className="status-row" key={row.label}>
+                                        <span>{row.label}</span>
+                                        <span className="status-bar"></span>
+                                        <strong>{row.count}</strong>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+
+                        <section className="panel-card">
+                            <h3>QUICK LINKS</h3>
+                            <div className="quick-links">
+                                <a href={data.quickLinks.newRequest}>New work request</a>
+                                <a href={data.quickLinks.verification}>Pending verifications</a>
+                                <a href={data.quickLinks.onGoing}>On-going requests</a>
+                                <a href={data.quickLinks.rejected}>Rejected requests</a>
+                            </div>
+                        </section>
+                    </div>
+
+                    <section className="panel-card table-section">
+                        <h3>Recent requests</h3>
+                        <div className="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>NO.</th>
+                                        <th>REQUESTED BY</th>
+                                        <th>MACHINE</th>
+                                        <th>WORK TYPE</th>
+                                        <th>DATE FILLED</th>
+                                        <th>STATUS</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {data.recentRequests.length === 0 ? (
+                                        <tr>
+                                            <td colSpan="6" className="empty">No requests yet.</td>
+                                        </tr>
+                                    ) : (
+                                        data.recentRequests.map((req) => (
+                                            <tr key={req.requestno}>
+                                                <td>{req.requestno}</td>
+                                                <td>{req.requestor}</td>
+                                                <td>{req.machinegroup}</td>
+                                                <td>{req.worktype}</td>
+                                                <td>{req.requestdate}</td>
+                                                <td>{req.status}</td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </section>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById("dashboardRoot")).render(<DashboardPage data={dashboardData} />);
+    })();
+</script>
+{% endblock %}

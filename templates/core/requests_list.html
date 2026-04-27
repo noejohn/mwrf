@@ -1,0 +1,378 @@
+{% extends "core/base.html" %}
+
+{% block content %}
+{{ request_ui|json_script:"request-ui-data" }}
+<div id="requestsRoot"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+    (function () {
+        const requestData = JSON.parse(document.getElementById("request-ui-data").textContent);
+        const csrfToken = "{{ csrf_token }}";
+
+        function htmlContent(markup) {
+            return { __html: markup || "" };
+        }
+
+        function buildUrl(template, pk) {
+            return (template || "").replace("/0/", `/${pk}/`);
+        }
+
+        function FieldErrors({ errors }) {
+            if (!errors || errors.length === 0) return null;
+            return errors.map((error, idx) => (
+                <small key={`error-${idx}`} className="field-error">{error}</small>
+            ));
+        }
+
+        function GenericField({ field }) {
+            if (!field) return null;
+            return (
+                <label className="field-label">
+                    <span>{field.label}</span>
+                    <span dangerouslySetInnerHTML={htmlContent(field.widgetHtml)} />
+                    <FieldErrors errors={field.errors} />
+                </label>
+            );
+        }
+
+        function UserRequestField({ field, label }) {
+            if (!field) return null;
+            return (
+                <>
+                    <label className="user-field">
+                        <span>{label || field.label}</span>
+                        <span dangerouslySetInnerHTML={htmlContent(field.widgetHtml)} />
+                    </label>
+                    <FieldErrors errors={field.errors} />
+                </>
+            );
+        }
+
+        function UserRequestMode({ data }) {
+            const fields = data.formFieldsByName || {};
+            const ongoingRows = data.ongoingRecords || [];
+
+            return (
+                <>
+                    <section className="user-request-entry">
+                        <form method="post" encType="multipart/form-data" className="user-request-form">
+                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+
+                            <div className="user-request-head">
+                                <span>ID: WR-{data.nextRequestNo || "--"}</span>
+                                <strong>CREATE WORK REQUEST</strong>
+                            </div>
+
+                            <div className="user-request-top-grid">
+                                <div className="user-form-col">
+                                    <label className="user-field">
+                                        <span>Date Requested</span>
+                                        <input type="text" className="preview-input" value={data.todayDate || "-"} readOnly />
+                                    </label>
+                                    <UserRequestField field={fields.requestor} label="Requestor" />
+                                    <UserRequestField field={fields.department} label="Department" />
+                                    <UserRequestField field={fields.requestdept} label="Requested Dept" />
+                                </div>
+
+                                <div className="user-form-col">
+                                    <UserRequestField field={fields.machinegroup} label="Machine Group" />
+                                    <UserRequestField field={fields.worktype} label="Type of Work" />
+                                    <UserRequestField field={fields.approval} label="Approving Person" />
+                                    <UserRequestField field={fields.dateneeded} label="Date Needed" />
+                                </div>
+
+                                <div className="user-form-col">
+                                    <UserRequestField field={fields.description} label="Description" />
+                                    <UserRequestField field={fields.reference_file} label="Upload File for Reference" />
+                                </div>
+                            </div>
+
+                            <div className="user-request-bottom-grid">
+                                <section className="user-readonly-card">
+                                    <h4>REQUEST STATUS</h4>
+                                    <UserRequestField field={fields.personnel} label="Personnel" />
+                                    <UserRequestField field={fields.status} label="Status" />
+                                    <UserRequestField field={fields.notes} label="Notes" />
+                                    <UserRequestField field={fields.dateupdated} label="Date Updated" />
+                                </section>
+
+                                <section className="user-readonly-card">
+                                    <h4>WORK REQUEST VERIFIER</h4>
+                                    <UserRequestField field={fields.verifiedby} label="Verified by" />
+                                    <UserRequestField field={fields.findings} label="Findings" />
+                                    <UserRequestField field={fields.verifiednote} label="Notes" />
+                                    <UserRequestField field={fields.verifieddate} label="Date Updated" />
+                                </section>
+
+                                <section className="user-consent-card">
+                                    <label className="consent-line">
+                                        <span dangerouslySetInnerHTML={htmlContent((fields.consent || {}).widgetHtml)} />
+                                        <span>{(fields.consent || {}).label || ""}</span>
+                                    </label>
+                                    <FieldErrors errors={(fields.consent || {}).errors || []} />
+                                    <div className="user-request-actions">
+                                        <button type="submit" className="btn btn-primary">Proceed</button>
+                                        <button type="reset" className="btn">Clear</button>
+                                    </div>
+                                </section>
+                            </div>
+                        </form>
+                    </section>
+
+                    <section className="user-ongoing-panel">
+                        <div className="user-ongoing-head">
+                            <h3>ONGOING REQUESTS</h3>
+                            <a href={data.urls.onGoingFilter} className="btn btn-mini">View On-going Page</a>
+                        </div>
+                        <div className="table-wrap">
+                            <table className="user-ongoing-table">
+                                <thead>
+                                    <tr>
+                                        <th>REQUEST NO.</th>
+                                        <th>DATE REQUESTED</th>
+                                        <th>MACHINE GROUP</th>
+                                        <th>WORK TYPE</th>
+                                        <th>STATUS</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {ongoingRows.length === 0 ? (
+                                        <tr>
+                                            <td colSpan="5" className="empty">No ongoing requests.</td>
+                                        </tr>
+                                    ) : (
+                                        ongoingRows.map((row) => (
+                                            <tr key={`ongoing-${row.requestno}`}>
+                                                <td><span className="request-link">WR-{row.requestno}</span></td>
+                                                <td>{row.requestdate}</td>
+                                                <td>{row.machinegroup}</td>
+                                                <td>{row.worktype}</td>
+                                                <td><span className="status-pill">{row.status}</span></td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </>
+            );
+        }
+
+        function AdminRequestMode({ data }) {
+            const [showNewRequest, setShowNewRequest] = React.useState(false);
+            const [selectedRequestNo, setSelectedRequestNo] = React.useState(
+                data.records.length ? data.records[0].requestno : null
+            );
+
+            React.useEffect(() => {
+                if (!data.records.length) {
+                    setSelectedRequestNo(null);
+                    return;
+                }
+                const exists = data.records.some((item) => item.requestno === selectedRequestNo);
+                if (!exists) {
+                    setSelectedRequestNo(data.records[0].requestno);
+                }
+            }, [data.records, selectedRequestNo]);
+
+            const selected = data.records.find((row) => row.requestno === selectedRequestNo) || null;
+
+            function onDeleteSubmit(event) {
+                if (!window.confirm("Delete this request?")) {
+                    event.preventDefault();
+                }
+            }
+
+            return (
+                <>
+                    <header className="request-toolbar">
+                        <h1>{data.filterLabel}</h1>
+                        <form method="get" className="request-search">
+                            <input type="text" name="q" placeholder="Search requests..." defaultValue={data.query || ""} />
+                            <button type="submit">Search</button>
+                        </form>
+                        {data.permissions.canRequestCreate ? (
+                            <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={() => setShowNewRequest((prev) => !prev)}
+                            >
+                                + New Request
+                            </button>
+                        ) : null}
+                    </header>
+
+                    {data.permissions.canRequestCreate && showNewRequest ? (
+                        <section className="new-request-panel">
+                            <h3>Create New Request</h3>
+                            <form method="post" className="crud-form">
+                                <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                <div className="request-form-grid">
+                                    {data.formFields.map((field) => (
+                                        <GenericField key={field.name} field={field} />
+                                    ))}
+                                </div>
+                                <div className="form-actions">
+                                    <button type="submit" className="btn btn-primary">Create Request</button>
+                                </div>
+                            </form>
+                        </section>
+                    ) : null}
+
+                    <section className="request-table-panel">
+                        <div className={`table-wrap dark ${data.isSuperadmin ? "dark-superadmin" : ""}`}>
+                            <table className={`request-table ${data.isSuperadmin ? "superadmin-wide" : ""}`}>
+                                <thead>
+                                    <tr>
+                                        {data.tableHeaders.map((header) => (
+                                            <th key={header.key}>{header.label}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {data.records.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={data.emptyColspan} className="empty">No requests found.</td>
+                                        </tr>
+                                    ) : (
+                                        data.records.map((row) => (
+                                            <tr
+                                                key={row.requestno}
+                                                className={`request-row ${selectedRequestNo === row.requestno ? "active" : ""}`}
+                                                onClick={() => setSelectedRequestNo(row.requestno)}
+                                            >
+                                                {data.tableHeaders.map((header) => {
+                                                    const value = row[header.key] || "-";
+                                                    if (header.key === "requestno") {
+                                                        return (
+                                                            <td key={`${row.requestno}-${header.key}`}>
+                                                                <span className="request-link">WR-{value}</span>
+                                                            </td>
+                                                        );
+                                                    }
+                                                    if (header.key === "description" && data.isSuperadmin) {
+                                                        return (
+                                                            <td key={`${row.requestno}-${header.key}`} className="request-col-description-cell">
+                                                                {value}
+                                                            </td>
+                                                        );
+                                                    }
+                                                    return <td key={`${row.requestno}-${header.key}`}>{value}</td>;
+                                                })}
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section className="preview-section">
+                        <div className="preview-header">
+                            <strong>PREVIEW</strong>
+                            <span>click a row to view details</span>
+                            <small>{selected ? `selected request WR-${selected.requestno}` : "select a row above"}</small>
+                        </div>
+                        <div className="preview-grid">
+                            <div className="preview-col details-col">
+                                <p><b>Date Requested:</b> <span>{selected ? selected.requestdate : "-"}</span></p>
+                                <p><b>Requestor:</b> <span>{selected ? selected.requestor : "-"}</span></p>
+                                <p><b>Department:</b> <span>{selected ? selected.department : "-"}</span></p>
+                                <p><b>Requested Dept:</b> <span>{selected ? selected.requestdept : "-"}</span></p>
+                                <p><b>Machine Group:</b> <span>{selected ? selected.machinegroup : "-"}</span></p>
+                                <p><b>Type of Work:</b> <span>{selected ? selected.worktype : "-"}</span></p>
+                                <p><b>Approving Person:</b> <span>{selected ? selected.approval : "-"}</span></p>
+                                <p><b>Date Needed:</b> <span>{selected ? selected.dateneeded : "-"}</span></p>
+                            </div>
+
+                            <div className="preview-col">
+                                <h4>DESCRIPTION</h4>
+                                <p className="preview-text">{selected ? selected.description : "Click any row in the table to see full details here."}</p>
+                            </div>
+
+                            <div className="preview-col">
+                                {data.isDoneFilter ? (
+                                    <>
+                                        <h4>WORK REQUEST VERIFIER</h4>
+                                        <div className="verifier-grid">
+                                            <label htmlFor="pv-verifiedby">Verified by</label>
+                                            <input id="pv-verifiedby" className="preview-input" value={selected ? selected.verifiedby : "-"} readOnly />
+
+                                            <label htmlFor="pv-findings">Findings</label>
+                                            <select id="pv-findings" className="preview-input" disabled value={selected ? selected.findings : "-"}>
+                                                <option value={selected ? selected.findings : "-"}>{selected ? selected.findings : "-"}</option>
+                                            </select>
+
+                                            <label htmlFor="pv-verifiednote">Notes</label>
+                                            <textarea id="pv-verifiednote" className="preview-input notes-box" rows="3" value={selected ? selected.verifiednote : "-"} readOnly />
+
+                                            <label htmlFor="pv-dateupdated">Date Updated</label>
+                                            <input id="pv-dateupdated" className="preview-input" value={selected ? selected.dateupdated : "-"} readOnly />
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <h4>REQUEST STATUS</h4>
+                                        <p><b>Personnel:</b> <span>{selected ? selected.personnel : "-"}</span></p>
+                                        <p><b>Status:</b> <span>{selected ? selected.status : "-"}</span></p>
+                                        <p><b>Notes:</b> <span>{selected ? selected.notes : "-"}</span></p>
+                                        <p><b>Date Updated:</b> <span>{selected ? selected.dateupdated : "-"}</span></p>
+                                        <p><b>Verified By:</b> <span>{selected ? selected.verifiedby : "-"}</span></p>
+                                        <p><b>Findings:</b> <span>{selected ? selected.findings : "-"}</span></p>
+                                        <p><b>Verified Note:</b> <span>{selected ? selected.verifiednote : "-"}</span></p>
+
+                                        {data.permissions.canRequestAction || data.permissions.canRequestDelete ? (
+                                            <div className="preview-actions">
+                                                {data.permissions.canRequestAction ? (
+                                                    <>
+                                                        <form method="post" action={buildUrl(data.urls.verifyTemplate, selected ? selected.requestno : 0)}>
+                                                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                                            <button type="submit" className="btn btn-mini" disabled={!selected}>Verify</button>
+                                                        </form>
+                                                        <form method="post" action={buildUrl(data.urls.rejectTemplate, selected ? selected.requestno : 0)}>
+                                                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                                            <button type="submit" className="btn btn-mini" disabled={!selected}>Reject</button>
+                                                        </form>
+                                                        <form method="post" action={buildUrl(data.urls.backjobTemplate, selected ? selected.requestno : 0)}>
+                                                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                                            <button type="submit" className="btn btn-mini" disabled={!selected}>Backjob</button>
+                                                        </form>
+                                                    </>
+                                                ) : null}
+                                                {data.permissions.canRequestDelete ? (
+                                                    <form
+                                                        method="post"
+                                                        action={buildUrl(data.urls.deleteTemplate, selected ? selected.requestno : 0)}
+                                                        onSubmit={onDeleteSubmit}
+                                                    >
+                                                        <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                                        <button type="submit" className="btn btn-mini btn-danger" disabled={!selected}>Delete</button>
+                                                    </form>
+                                                ) : null}
+                                            </div>
+                                        ) : null}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </section>
+                </>
+            );
+        }
+
+        function RequestsPage({ data }) {
+            return (
+                <section className="page-card request-explorer">
+                    {data.isUserRequestMode ? <UserRequestMode data={data} /> : <AdminRequestMode data={data} />}
+                </section>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById("requestsRoot")).render(<RequestsPage data={requestData} />);
+    })();
+</script>
+{% endblock %}

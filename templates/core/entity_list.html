@@ -1,0 +1,144 @@
+{% extends "core/base.html" %}
+
+{% block content %}
+{{ entity_ui|json_script:"entity-ui-data" }}
+<div id="entityRoot"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+    (function () {
+        const entityData = JSON.parse(document.getElementById("entity-ui-data").textContent);
+        const csrfToken = "{{ csrf_token }}";
+
+        function buildUrl(template, pk) {
+            return (template || "").replace("/0/", `/${pk}/`);
+        }
+
+        function htmlContent(markup) {
+            return { __html: markup };
+        }
+
+        function EntityForm({ data, csrf }) {
+            return (
+                <section className="panel-card">
+                    <h3>{data.editing ? "Update Record" : "Create Record"}</h3>
+                    <form method="post" encType="multipart/form-data" className="crud-form">
+                        <input type="hidden" name="csrfmiddlewaretoken" value={csrf} />
+                        {data.formFields.map((field, index) => (
+                            <label className="field-label" key={`${field.label}-${index}`}>
+                                <span>{field.label}</span>
+                                <span dangerouslySetInnerHTML={htmlContent(field.widgetHtml)} />
+                                {field.errors.map((error, errorIdx) => (
+                                    <small className="field-error" key={`${index}-error-${errorIdx}`}>{error}</small>
+                                ))}
+                            </label>
+                        ))}
+                        <div className="form-actions">
+                            <button type="submit" className="btn btn-primary">
+                                {data.editing ? "Update" : "Save"}
+                            </button>
+                            {data.editing ? <a href={data.urls.cancel} className="btn">Cancel</a> : null}
+                        </div>
+                    </form>
+                </section>
+            );
+        }
+
+        function EntityTable({ data, csrf }) {
+            function onDeleteSubmit(event) {
+                if (!window.confirm("Delete this record?")) {
+                    event.preventDefault();
+                }
+            }
+
+            return (
+                <section className="panel-card">
+                    <h3>{data.title} List</h3>
+                    <div className="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    {data.tableHeaders.map((header) => (
+                                        <th key={header.key}>{header.label.toUpperCase()}</th>
+                                    ))}
+                                    <th>ACTIONS</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.records.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={data.emptyColspan} className="empty">No records found.</td>
+                                    </tr>
+                                ) : (
+                                    data.records.map((row) => (
+                                        <tr key={row.pk}>
+                                            {data.tableHeaders.map((header) => (
+                                                <td key={`${row.pk}-${header.key}`}>{row.values[header.key] || ""}</td>
+                                            ))}
+                                            <td>
+                                                <div className="row-actions">
+                                                    <a
+                                                        href={buildUrl(data.urls.editTemplate, row.pk)}
+                                                        className="btn btn-mini"
+                                                    >
+                                                        Edit
+                                                    </a>
+
+                                                    {data.entity === "users" ? (
+                                                        <form
+                                                            method="post"
+                                                            action={buildUrl(data.urls.toggleUserTemplate, row.pk)}
+                                                            className="inline"
+                                                        >
+                                                            <input type="hidden" name="csrfmiddlewaretoken" value={csrf} />
+                                                            <button type="submit" className="btn btn-mini">
+                                                                {row.userstatus === "ACTIVE" ? "Set Inactive" : "Set Active"}
+                                                            </button>
+                                                        </form>
+                                                    ) : null}
+
+                                                    <form
+                                                        method="post"
+                                                        action={buildUrl(data.urls.deleteTemplate, row.pk)}
+                                                        className="inline"
+                                                        onSubmit={onDeleteSubmit}
+                                                    >
+                                                        <input type="hidden" name="csrfmiddlewaretoken" value={csrf} />
+                                                        <button type="submit" className="btn btn-mini btn-danger">Delete</button>
+                                                    </form>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            );
+        }
+
+        function EntityPage({ data, csrf }) {
+            return (
+                <section className="page-card">
+                    <header className="page-header split">
+                        <h1>{data.title.toUpperCase()}</h1>
+                        <span className="subtitle">{data.editing ? "Edit" : "Add"} {data.title}</span>
+                    </header>
+
+                    <div className="crud-grid">
+                        <EntityForm data={data} csrf={csrf} />
+                        <EntityTable data={data} csrf={csrf} />
+                    </div>
+                </section>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById("entityRoot")).render(
+            <EntityPage data={entityData} csrf={csrfToken} />
+        );
+    })();
+</script>
+{% endblock %}

@@ -1,0 +1,491 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MWRF Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --page-bg: #070d15;
+            --card-bg: #1c242d;
+            --brand-green: #17643f;
+            --soft-green: #9acdaf;
+            --field-border: #4a5963;
+            --link-green: #80d9a7;
+            --muted: #9fada8;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            position: relative;
+            background-color: var(--page-bg);
+            font-family: "Manrope", "Segoe UI", sans-serif;
+            color: #ecf2ef;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background-color: var(--page-bg);
+            background-image:
+                linear-gradient(rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0.45)),
+                url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSczNjAnIGhlaWdodD0nMzYwJyB2aWV3Qm94PScwIDAgMzYwIDM2MCc+CiAgPGcgZmlsbD0nbm9uZScgc3Ryb2tlPScjMDM2ZTNhJyBzdHJva2Utd2lkdGg9JzQnIHN0cm9rZS1saW5lY2FwPSdyb3VuZCcgc3Ryb2tlLWxpbmVqb2luPSdyb3VuZCcgb3BhY2l0eT0nMC45Jz4KICAgIDxwYXRoIGQ9J00zMCA2NWM0Mi00MCA5Ni0zNCAxMjQgMjMnLz4KICAgIDxwYXRoIGQ9J000NyA4NGMzMy0yOSA3MC0yNCA5MSAxOCcvPgogICAgPHBhdGggZD0nTTk4IDEwMGwxNiA3Jy8+CgogICAgPHBhdGggZD0nTTIyMCA0MGMzNC0yOSA3OS0yNiA5OSAxNicvPgogICAgPHBhdGggZD0nTTIzNCA1NmMyNy0yMiA1OC0xOSA3NCAxMycvPgoKICAgIDxwYXRoIGQ9J00yNTAgMTQyYzQ1LTM3IDk1LTMwIDEyMCAyNCcvPgogICAgPHBhdGggZD0nTTI2OCAxNjJjMzUtMjggNzItMjQgOTAgMTknLz4KCiAgICA8cGF0aCBkPSdNMjggMjIyYzQ3LTM4IDk5LTMxIDEyNCAyNCcvPgogICAgPHBhdGggZD0nTTQ1IDI0MWMzNi0yOSA3My0yNCA5MiAxOCcvPgoKICAgIDxwYXRoIGQ9J00xNjYgMjI2YzQwLTM0IDg2LTI5IDEwOSAyMCcvPgogICAgPHBhdGggZD0nTTE4MiAyNDRjMzEtMjUgNjQtMjEgODEgMTQnLz4KCiAgICA8cGF0aCBkPSdNMTQwIDMyMmM0MC0zNCA4OC0yOSAxMTIgMjMnLz4KICAgIDxwYXRoIGQ9J00xNTYgMzQxYzMxLTI1IDY2LTIxIDg0IDE1Jy8+CgogICAgPHBhdGggZD0nTTI4MiAyODVjMzItMjcgNzItMjMgOTEgMTQnLz4KICAgIDxwYXRoIGQ9J00yOTYgMzAwYzI0LTIwIDUzLTE3IDY3IDExJy8+CiAgPC9nPgo8L3N2Zz4=");
+            background-size: auto, 360px 360px;
+            background-position: center, center;
+            background-repeat: no-repeat, repeat;
+        }
+
+        #root {
+            min-height: 100vh;
+        }
+
+        .page {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 36px 14px 18px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .page::before,
+        .page::after {
+            content: "";
+            position: fixed;
+            width: min(35vw, 280px);
+            height: min(28vw, 220px);
+            min-width: 170px;
+            min-height: 130px;
+            background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScyODAnIGhlaWdodD0nMjIwJyB2aWV3Qm94PScwIDAgMjgwIDIyMCc+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9J2xlYWYnIHgxPScwJyB4Mj0nMScgeTE9JzAnIHkyPScxJz4KICAgICAgPHN0b3Agb2Zmc2V0PScwJyBzdG9wLWNvbG9yPScjOGRlMDdhJy8+CiAgICAgIDxzdG9wIG9mZnNldD0nMC41NScgc3RvcC1jb2xvcj0nIzQ3Yjk1ZScvPgogICAgICA8c3RvcCBvZmZzZXQ9JzEnIHN0b3AtY29sb3I9JyMxZjhmNDknLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxnIGZpbGw9J3VybCgjbGVhZiknIHN0cm9rZT0nIzJhOGY0Yicgc3Ryb2tlLXdpZHRoPScyJz4KICAgIDxwYXRoIGQ9J004IDM4QzYyIDEwIDEzMCAyMCAxOTYgODRDMTQwIDg4IDY4IDgwIDggMzhaJy8+CiAgICA8cGF0aCBkPSdNMjAgODZDODQgNTggMTUyIDY2IDIyNCAxMzBDMTU4IDEzNiA4MiAxMzAgMjAgODZaJy8+CiAgICA8cGF0aCBkPSdNNDYgMTMyQzEwOCAxMDggMTc0IDExNiAyNTAgMTgwQzE4MiAxODYgMTEyIDE3OCA0NiAxMzJaJy8+CiAgPC9nPgogIDxnIHN0cm9rZT0nI2Q0ZmZiZScgc3Ryb2tlLXdpZHRoPScyJyBzdHJva2UtbGluZWNhcD0ncm91bmQnIG9wYWNpdHk9JzAuNzUnPgogICAgPHBhdGggZD0nTTIwIDQxTDE4NCA4MicvPgogICAgPHBhdGggZD0nTTM0IDg4TDIxNCAxMjgnLz4KICAgIDxwYXRoIGQ9J001OCAxMzRMMjM4IDE3OCcvPgogICAgPHBhdGggZD0nTTY3IDI4TDEzOCA3OCcvPgogICAgPHBhdGggZD0nTTkzIDc0TDE2OCAxMjInLz4KICAgIDxwYXRoIGQ9J00xMjkgMTIyTDE5NyAxNjgnLz4KICA8L2c+Cjwvc3ZnPg==");
+            background-size: contain;
+            background-repeat: no-repeat;
+            pointer-events: none;
+            z-index: 1;
+            filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.18));
+        }
+
+        .page::before {
+            top: 0;
+            left: 0;
+        }
+
+        .page::after {
+            right: 0;
+            bottom: 0;
+            transform: rotate(180deg);
+        }
+
+        .card {
+            width: min(560px, 94vw);
+            background: var(--card-bg);
+            border-radius: 28px;
+            overflow: visible;
+            animation: lift-in 650ms ease-out;
+            position: relative;
+            z-index: 3;
+            box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45);
+            border: 1px solid #33404b;
+            margin-top: 24px;
+        }
+
+        .badge-image {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        @keyframes lift-in {
+            from {
+                transform: translateY(14px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .hero {
+            background: var(--brand-green);
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px 24px;
+            border-radius: 28px 28px 0 0;
+        }
+
+        .hero-brand {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            width: 100%;
+        }
+
+        .hero-saba {
+            width: min(72%, 340px);
+            min-width: 180px;
+            max-width: 100%;
+            filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.2));
+        }
+
+        .logo-tile {
+            width: 110px;
+            height: 110px;
+            background: #f2f2f2;
+            border-radius: 15px;
+            display: grid;
+            place-items: center;
+            flex-shrink: 0;
+        }
+
+        .logo-image {
+            width: 90px;
+            height: 90px;
+            object-fit: contain;
+            display: block;
+        }
+
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+      
+
+        .form-area {
+            padding: 24px 34px 30px;
+            animation: fade-in 550ms ease-out 280ms both;
+        }
+
+        .field-group {
+            margin-bottom: 18px;
+        }
+
+        .field-group label {
+            display: block;
+            margin: 0 0 8px 4px;
+            font-size: clamp(0.92rem, 1.25vw, 1rem);
+            letter-spacing: 0.06em;
+            font-weight: 700;
+        }
+
+        .input-shell {
+            position: relative;
+        }
+
+        .input-shell .icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            width: 24px;
+            height: 24px;
+            transform: translateY(-50%);
+            color: #ced9d5;
+        }
+
+        .input-shell input {
+            width: 100%;
+            height: 44px;
+            border: 1.6px solid var(--field-border);
+            border-radius: 10px;
+            padding: 0 14px 0 48px;
+            background: #252f38;
+            color: #f4f6f7;
+            font-family: inherit;
+            font-size: 0.98rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            outline: none;
+        }
+
+        .input-shell input::placeholder {
+            color: var(--muted);
+            font-weight: 700;
+        }
+
+        .input-shell input:focus {
+            border-color: #299b62;
+            box-shadow: 0 0 0 2px rgba(41, 155, 98, 0.18);
+        }
+
+        .button-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 18px;
+            margin-top: 2px;
+        }
+
+        .button-row button {
+            width: 132px;
+            height: 40px;
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 1rem;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: transform 130ms ease, opacity 130ms ease, background-color 130ms ease;
+        }
+
+        .button-row button:hover {
+            transform: translateY(-1px);
+        }
+
+        .button-row button:active {
+            transform: translateY(0);
+        }
+
+        .button-row button:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .sign-in-btn {
+            background: var(--brand-green);
+            border: none;
+            color: #ffffff;
+            font-weight: 700;
+        }
+
+        .clear-btn {
+            background: #2a333d;
+            border: 1.5px solid var(--field-border);
+            color: #ebf0ee;
+            font-weight: 700;
+        }
+
+        .links {
+            text-align: center;
+            margin-top: 18px;
+            color: var(--link-green);
+            font-size: 0.94rem;
+            letter-spacing: 0.03em;
+        }
+
+        .login-error {
+            margin: 10px 0 0;
+            color: #ff8f8f;
+            font-weight: 700;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        .links a {
+            color: inherit;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            display: block;
+            margin: 10px 0;
+            font-weight: 700;
+        }
+
+        @media (max-width: 720px) {
+            .card {
+                margin-top: 24px;
+                border-radius: 22px;
+            }
+
+            .hero {
+                padding: 14px 16px;
+                border-radius: 22px 22px 0 0;
+            }
+
+            .hero-brand {
+                gap: 10px;
+            }
+
+            .hero-saba {
+                width: min(68vw, 290px);
+                min-width: 130px;
+            }
+
+            .info-box {
+                width: calc(100% - 34px);
+            }
+
+            .form-area {
+                padding: 22px 18px 24px;
+            }
+
+            .button-row {
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="text/babel">
+        const initialErrorMessage = "{{ initial_error|escapejs }}";
+
+        function UserIcon() {
+            return (
+                <svg className="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <circle cx="12" cy="8" r="5"></circle>
+                    <rect x="3.5" y="13.6" width="17" height="9.2" rx="4.4"></rect>
+                </svg>
+            );
+        }
+
+        function LockIcon() {
+            return (
+                <svg className="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M8.2 10.2V7.8a3.8 3.8 0 1 1 7.6 0v2.4h1.5c1.3 0 2.3 1 2.3 2.3V20c0 1.3-1 2.3-2.3 2.3H6.7c-1.3 0-2.3-1-2.3-2.3v-7.5c0-1.3 1-2.3 2.3-2.3h1.5Zm5 5.1c0-.7-.5-1.2-1.2-1.2s-1.2.5-1.2 1.2c0 .5.3.9.7 1.1v2.2h1v-2.2c.4-.2.7-.6.7-1.1Zm1-5.1V7.8a2.2 2.2 0 1 0-4.4 0v2.4h4.4Z"></path>
+                </svg>
+            );
+        }
+
+        function GoldenSabaBadge({ className = "badge-image" }) {
+            return (
+                <img
+                    className={className}
+                    src="{% static 'images/GoldenSabaLogo.png' %}"
+                    alt="Golden Saba logo"
+                />
+            );
+        }
+
+        function LoginPage() {
+            const [username, setUsername] = React.useState("");
+            const [password, setPassword] = React.useState("");
+            const [errorMessage, setErrorMessage] = React.useState(initialErrorMessage);
+            const [submitting, setSubmitting] = React.useState(false);
+
+            const onSubmit = async (event) => {
+                event.preventDefault();
+                setErrorMessage("");
+
+                if (!username.trim() || !password.trim()) {
+                    setErrorMessage("Username and password are required.");
+                    return;
+                }
+
+                setSubmitting(true);
+                try {
+                    const response = await fetch("{% url 'login_api' %}", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            username: username.trim(),
+                            password,
+                        }),
+                    });
+                    const data = await response.json();
+                    if (!response.ok || !data.ok) {
+                        setErrorMessage(data.message || "Login failed.");
+                        return;
+                    }
+                    window.location.href = data.redirect || "{% url 'core:dashboard_home' %}";
+                } catch (error) {
+                    setErrorMessage("Unable to connect to server.");
+                } finally {
+                    setSubmitting(false);
+                }
+            };
+
+            const onClear = () => {
+                setUsername("");
+                setPassword("");
+                setErrorMessage("");
+            };
+
+            return (
+                <main className="page">
+                    <section className="card">
+                        <header className="hero">
+                            <div className="hero-brand">
+                                <div className="logo-tile">
+                                    <img
+                                        className="logo-image"
+                                        src="{% static 'images/SFILogo.jpg' %}"
+                                        alt="SFI logo"
+                                    />
+                                </div>
+                                <GoldenSabaBadge className="hero-saba" />
+                            </div>
+                        </header>
+
+                        <section className="info-box">
+                             
+                        </section>
+
+                        <form className="form-area" onSubmit={onSubmit}>
+                            <div className="field-group">
+                                <label htmlFor="username">USERNAME</label>
+                                <div className="input-shell">
+                                    <UserIcon />
+                                    <input
+                                        id="username"
+                                        type="text"
+                                        placeholder="Enter your Username"
+                                        value={username}
+                                        onChange={(event) => setUsername(event.target.value)}
+                                        autoComplete="username"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="field-group">
+                                <label htmlFor="password">PASSWORD</label>
+                                <div className="input-shell">
+                                    <LockIcon />
+                                    <input
+                                        id="password"
+                                        type="password"
+                                        placeholder="Enter your Password"
+                                        value={password}
+                                        onChange={(event) => setPassword(event.target.value)}
+                                        autoComplete="current-password"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="button-row">
+                                <button type="submit" className="sign-in-btn" disabled={submitting}>
+                                    {submitting ? "Signing In..." : "Sign In"}
+                                </button>
+                                <button type="button" className="clear-btn" onClick={onClear}>Clear</button>
+                            </div>
+                            {errorMessage && <p className="login-error">{errorMessage}</p>}
+
+                            <div className="links">
+                                <a href="#">Forgot username or password?</a>
+                                <a href="{% url 'register' %}">Don't have an account? Register</a>
+                            </div>
+                        </form>
+                    </section>
+                </main>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<LoginPage />);
+    </script>
+</body>
+</html>
