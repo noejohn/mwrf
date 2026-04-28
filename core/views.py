@@ -198,7 +198,7 @@ def _status_category(value):
 def _match_request_filter(request_obj, filter_key):
     category = _status_category(request_obj.status)
     if filter_key == "all":
-        return True
+        return category != "backjob"
     if filter_key == "current":
         return category in {"new", "on-going", "verification", "backjob"}
     return category == filter_key
@@ -1073,7 +1073,7 @@ def request_list(request, filter_key="all"):
         filtered_records = [record for record in filtered_records if _matches(record)]
 
     counts = {
-        "all": len(all_records),
+        "all": len([r for r in all_records if _match_request_filter(r, "all")]),
         "current": len([r for r in all_records if _match_request_filter(r, "current")]),
         "on_going": len([r for r in all_records if _match_request_filter(r, "on-going")]),
         "verification": len([r for r in all_records if _match_request_filter(r, "verification")]),

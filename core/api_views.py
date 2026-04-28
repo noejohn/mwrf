@@ -344,7 +344,7 @@ class ApiRequestsView(APIView):
             filtered_records = [record for record in filtered_records if _matches(record)]
 
         counts = {
-            "all": len(all_records),
+            "all": len([r for r in all_records if _match_request_filter(r, "all")]),
             "current": len([r for r in all_records if _match_request_filter(r, "current")]),
             "on_going": len([r for r in all_records if _match_request_filter(r, "on-going")]),
             "verification": len([r for r in all_records if _match_request_filter(r, "verification")]),

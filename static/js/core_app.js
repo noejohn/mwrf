@@ -457,7 +457,6 @@
     }
 
     function AdminRequestMode({ data }) {
-        const [showNewRequest, setShowNewRequest] = React.useState(false);
         const [selectedRequestNo, setSelectedRequestNo] = React.useState(
             data.records.length ? data.records[0].requestno : null
         );
@@ -500,33 +499,7 @@
                         <input type="text" name="q" placeholder="Search requests..." defaultValue={data.query || ""} />
                         <button type="submit">Search</button>
                     </form>
-                    {data.permissions.canRequestCreate ? (
-                        <button
-                            type="button"
-                            className="btn btn-primary"
-                            onClick={() => setShowNewRequest((prev) => !prev)}
-                        >
-                            + New Request
-                        </button>
-                    ) : null}
                 </header>
-
-                {data.permissions.canRequestCreate && showNewRequest ? (
-                    <section className="new-request-panel">
-                        <h3>Create New Request</h3>
-                        <form method="post" className="crud-form">
-                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
-                            <div className="request-form-grid">
-                                {data.formFields.map((field) => (
-                                    <GenericField key={field.name} field={field} />
-                                ))}
-                            </div>
-                            <div className="form-actions">
-                                <button type="submit" className="btn btn-primary">Create Request</button>
-                            </div>
-                        </form>
-                    </section>
-                ) : null}
 
                 <section className="request-table-panel">
                     <div className={`table-wrap dark ${data.isSuperadmin ? "dark-superadmin" : ""}`}>
