@@ -325,6 +325,18 @@ th {
     color: var(--text-soft);
 }
 
+.form-section-title {
+    margin: 8px 0 0;
+    padding: 6px 8px;
+    border: 1px solid #51606b;
+    background: #64676d;
+    color: #f6f7f8;
+    text-align: center;
+    font-size: 0.95rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
 .form-control {
     border: 1px solid var(--border);
     border-radius: 8px;

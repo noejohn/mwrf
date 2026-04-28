@@ -8,9 +8,11 @@ from django.db.models import Max
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.crypto import get_random_string
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import UntypedToken
+from rest_framework_simplejwt.exceptions import TokenError
 
 from .forms import (
     ApprovalForm,
@@ -35,6 +37,7 @@ from .models import (
     TblUsers,
     TblWorkType,
 )
+from .security import hash_password, is_password_hashed, set_user_password, verify_user_password
 
 
 ENTITY_CONFIG = {
@@ -71,6 +74,10 @@ ENTITY_CONFIG = {
         "title": "Machines",
         "active_page": "machine",
         "table_columns": ["machineno", "machinename"],
+        "column_labels": {
+            "machineno": "No.",
+            "machinename": "Machine Group",
+        },
     },
     "work-types": {
         "model": TblWorkType,
@@ -78,6 +85,10 @@ ENTITY_CONFIG = {
         "title": "Work Types",
         "active_page": "worktype",
         "table_columns": ["workno", "worktype"],
+        "column_labels": {
+            "workno": "No.",
+            "worktype": "Work Type",
+        },
     },
     "statuses": {
         "model": TblStatus,
@@ -85,6 +96,10 @@ ENTITY_CONFIG = {
         "title": "Statuses",
         "active_page": "status",
         "table_columns": ["statusno", "status"],
+        "column_labels": {
+            "statusno": "No.",
+            "status": "Status",
+        },
     },
     "approvals": {
         "model": TblApproval,
@@ -92,18 +107,22 @@ ENTITY_CONFIG = {
         "title": "Approving Personnel",
         "active_page": "approval",
         "table_columns": ["approvalno", "approvalname"],
+        "column_labels": {
+            "approvalno": "No.",
+            "approvalname": "Full Name",
+        },
         "manual_pk": True,
     },
 }
 
 REQUEST_FILTER_LABELS = {
-    "all": "All Requests",
-    "current": "Current Requests",
-    "on-going": "On-going Requests",
+    "all": "All Machine Request",
+    "current": "Current Machine Request",
+    "on-going": "On going machine request",
     "verification": "Verification Requests",
-    "done": "Done Requests",
-    "rejected": "Rejected Requests",
-    "backjob": "Back Job Requests",
+    "done": "Done machine work request",
+    "rejected": "Rejected machine request",
+    "backjob": "Backjob machine request",
 }
 
 REQUEST_TABLE_COLUMNS_SUPERADMIN = [
@@ -233,21 +252,26 @@ def _can_manage_entity(role, entity):
 def _ensure_default_admin_user():
     try:
         if TblUsers.objects.filter(username__iexact=DEFAULT_ADMIN_USERNAME).exists():
-            return
-        default_department = (
-            TblDepartment.objects.order_by("deptno").values_list("depname", flat=True).first() or "ADMIN"
-        )
-        TblUsers.objects.create(
-            name="Admin",
-            userdepartment=default_department[:50],
-            useraddress="N/A",
-            usercontact="0000000000",
-            userposition="ADMIN",
-            username=DEFAULT_ADMIN_USERNAME,
-            userpassword=DEFAULT_ADMIN_PASSWORD,
-            userstatus="ACTIVE",
-            userimage=b"",
-        )
+            pass
+        else:
+            default_department = (
+                TblDepartment.objects.order_by("deptno").values_list("depname", flat=True).first() or "ADMIN"
+            )
+            TblUsers.objects.create(
+                name="Admin",
+                userdepartment=default_department[:50],
+                useraddress="N/A",
+                usercontact="0000000000",
+                userposition="ADMIN",
+                username=DEFAULT_ADMIN_USERNAME,
+                userpassword=hash_password(DEFAULT_ADMIN_PASSWORD),
+                userstatus="ACTIVE",
+                userimage=b"",
+            )
+        # One-time safety upgrade path for any existing plain-text rows.
+        for item in TblUsers.objects.all().only("userid", "userpassword"):
+            if not is_password_hashed(item.userpassword):
+                set_user_password(item, item.userpassword, save=True)
     except Exception:
         return
 
@@ -302,7 +326,7 @@ def login_api(request):
     _ensure_default_admin_user()
 
     user = TblUsers.objects.filter(username__iexact=username).first()
-    if not user or user.userpassword != password:
+    if not user or not verify_user_password(user, password):
         return JsonResponse({"ok": False, "message": "Invalid username or password."}, status=401)
 
     if (user.userstatus or "").upper() != "ACTIVE":
@@ -317,7 +341,22 @@ def login_api(request):
     request.session["mwrf_role"] = role
     request.session["mwrf_role_label"] = user.userposition
 
-    return JsonResponse({"ok": True, "redirect": reverse("core:dashboard_home")})
+    refresh = RefreshToken()
+    refresh["user_id"] = str(user.userid)
+    refresh["username"] = str(user.username or "")
+    refresh["name"] = str(user.name or "")
+    refresh["role"] = role
+    access = refresh.access_token
+    return JsonResponse(
+        {
+            "ok": True,
+            "redirect": reverse("core:dashboard_home"),
+            "access_token": str(access),
+            "refresh_token": str(refresh),
+            "token_type": "Bearer",
+            "expires_in": int(access.lifetime.total_seconds()),
+        }
+    )
 
 
 def register_page(request):
@@ -345,13 +384,17 @@ def register_api(request):
     department = str(payload.get("department", "")).strip()
     address = str(payload.get("address", "")).strip()
     contact = str(payload.get("contact", "")).strip()
+    password = str(payload.get("password", ""))
     consent = bool(payload.get("consent", False))
 
-    if not fullname or not department or not address or not contact:
+    if not fullname or not department or not address or not contact or not password:
         return JsonResponse({"ok": False, "message": "All fields are required."}, status=400)
 
-    if len(fullname) > 50 or len(department) > 50 or len(address) > 25 or len(contact) > 15:
+    if len(fullname) > 50 or len(department) > 50 or len(address) > 25 or len(contact) > 15 or len(password) > 50:
         return JsonResponse({"ok": False, "message": "One or more fields exceed allowed length."}, status=400)
+
+    if len(password) < 6:
+        return JsonResponse({"ok": False, "message": "Password must be at least 6 characters."}, status=400)
 
     if not consent:
         return JsonResponse({"ok": False, "message": "You must accept the data privacy consent."}, status=400)
@@ -367,8 +410,6 @@ def register_api(request):
         username = f"{base_username}{suffix}"
         suffix += 1
 
-    temp_password = (contact[-8:] if contact else "") or get_random_string(8)
-
     TblUsers.objects.create(
         name=fullname[:50],
         userdepartment=department[:50],
@@ -376,7 +417,7 @@ def register_api(request):
         usercontact=contact[:15],
         userposition="USER",
         username=username,
-        userpassword=temp_password,
+        userpassword=hash_password(password[:50]),
         userstatus="INACTIVE",
         userimage=b"",
     )
@@ -386,7 +427,51 @@ def register_api(request):
             "ok": True,
             "message": "Registration submitted. Wait for super admin activation.",
             "username": username,
-            "temp_password": temp_password,
+        }
+    )
+
+
+@csrf_exempt
+def verify_jwt_api(request):
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "message": "Method not allowed."}, status=405)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except json.JSONDecodeError:
+        payload = {}
+
+    auth_header = str(request.headers.get("Authorization", "") or "").strip()
+    token = str(payload.get("token", "") or "").strip()
+    if not token and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+
+    if not token:
+        return JsonResponse({"ok": False, "message": "Token is required."}, status=400)
+
+    try:
+        decoded = UntypedToken(token)
+    except TokenError as exc:
+        return JsonResponse({"ok": False, "message": str(exc)}, status=401)
+
+    user_id = decoded.get("user_id")
+    user = TblUsers.objects.filter(userid=user_id).first()
+    if not user:
+        return JsonResponse({"ok": False, "message": "User not found for token."}, status=401)
+    if (user.userstatus or "").upper() != "ACTIVE":
+        return JsonResponse({"ok": False, "message": "User is inactive."}, status=403)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "payload": {
+                "sub": str(user.userid),
+                "username": str(user.username or ""),
+                "name": str(user.name or ""),
+                "role": decoded.get("role") or _resolve_role(user.userposition),
+                "exp": decoded.get("exp"),
+                "iat": decoded.get("iat"),
+            },
         }
     )
 
@@ -426,16 +511,8 @@ def dashboard_home(request):
         ("Back-job", counts["backjob"]),
     ]
 
-    context = {
-        "active_page": "home",
-        "current_user": request.current_user,
-        "permissions": request.current_permissions,
-        "counts": counts,
-        "status_rows": status_rows,
-        "recent_requests": requests_qs[:10],
-        "dashboard_ui": _build_dashboard_ui_payload(requests_qs, counts, status_rows),
-    }
-    return render(request, "core/dashboard.html", context)
+    dashboard_ui = _build_dashboard_ui_payload(requests_qs, counts, status_rows)
+    return _render_core_react_page(request, "home", "dashboard", dashboard_ui)
 
 
 @superadmin_required
@@ -456,8 +533,7 @@ def profile_settings(request):
             profile_form = UserProfileForm(instance=user)
             password_form = ChangePasswordForm(request.POST, user=user)
             if password_form.is_valid():
-                user.userpassword = password_form.cleaned_data["new_password"]
-                user.save(update_fields=["userpassword"])
+                set_user_password(user, password_form.cleaned_data["new_password"], save=True)
                 messages.success(request, "Password changed successfully.")
                 return redirect("core:profile_settings")
         else:
@@ -468,17 +544,8 @@ def profile_settings(request):
         password_form = ChangePasswordForm(user=user)
 
     current_user = TblUsers.objects.get(userid=user.userid)
-    profile_name = str(current_user.name or "").strip()
-    context = {
-        "active_page": "profile",
-        "current_user": current_user,
-        "permissions": request.current_permissions,
-        "profile_form": profile_form,
-        "password_form": password_form,
-        "profile_image_data": _profile_image_data_uri(current_user),
-        "profile_initial": (profile_name[:1] or "U").upper(),
-    }
-    return render(request, "core/profile_settings.html", context)
+    profile_ui = _build_profile_ui_payload(current_user, profile_form, password_form)
+    return _render_core_react_page(request, "profile", "profile", profile_ui)
 
 
 def _entity_or_404(entity):
@@ -521,6 +588,186 @@ def _build_dashboard_ui_payload(requests_qs, counts, status_rows):
     }
 
 
+def _serialize_form_fields(form):
+    return [
+        {
+            "name": field.name,
+            "label": field.label,
+            "widgetHtml": str(field),
+            "errors": [str(error) for error in field.errors],
+        }
+        for field in form
+    ]
+
+
+def _build_shell_ui_payload(request, active_page):
+    permissions = request.current_permissions
+    menu_sections = []
+
+    general_items = []
+    if permissions.get("can_view_dashboard"):
+        general_items.append(
+            {
+                "key": "home",
+                "label": "Home",
+                "url": reverse("core:dashboard_home"),
+            }
+        )
+    general_items.append(
+        {
+            "key": "profile",
+            "label": "Settings",
+            "url": reverse("core:profile_settings"),
+        }
+    )
+    if permissions.get("can_manage_users"):
+        general_items.append(
+            {
+                "key": "users",
+                "label": "Users",
+                "url": reverse("core:entity_list", kwargs={"entity": "users"}),
+            }
+        )
+    if permissions.get("can_manage_personnel"):
+        general_items.append(
+            {
+                "key": "personnel",
+                "label": "Personnel",
+                "url": reverse("core:entity_list", kwargs={"entity": "personnel"}),
+            }
+        )
+    if permissions.get("can_manage_departments"):
+        general_items.append(
+            {
+                "key": "department",
+                "label": "Department",
+                "url": reverse("core:entity_list", kwargs={"entity": "departments"}),
+            }
+        )
+    if permissions.get("can_manage_machines"):
+        general_items.append(
+            {
+                "key": "machine",
+                "label": "Machine",
+                "url": reverse("core:entity_list", kwargs={"entity": "machines"}),
+            }
+        )
+    if permissions.get("can_manage_worktypes"):
+        general_items.append(
+            {
+                "key": "worktype",
+                "label": "Work Type",
+                "url": reverse("core:entity_list", kwargs={"entity": "work-types"}),
+            }
+        )
+    menu_sections.append({"heading": "GENERAL", "items": general_items})
+
+    request_items = []
+    if permissions.get("can_manage_approvals"):
+        request_items.append(
+            {
+                "key": "approval",
+                "label": "Approval",
+                "url": reverse("core:entity_list", kwargs={"entity": "approvals"}),
+            }
+        )
+    if permissions.get("can_manage_statuses"):
+        request_items.append(
+            {
+                "key": "status",
+                "label": "Status",
+                "url": reverse("core:entity_list", kwargs={"entity": "statuses"}),
+            }
+        )
+    if permissions.get("can_view_requests"):
+        request_items.append(
+            {
+                "key": "allrequest",
+                "label": "All Request",
+                "url": reverse("core:request_list"),
+            }
+        )
+        if permissions.get("can_request_action"):
+            request_items.extend(
+                [
+                    {
+                        "key": "current",
+                        "label": "Current",
+                        "url": reverse("core:request_list_filtered", kwargs={"filter_key": "current"}),
+                    },
+                    {
+                        "key": "on-going",
+                        "label": "On-going",
+                        "url": reverse("core:request_list_filtered", kwargs={"filter_key": "on-going"}),
+                    },
+                    {
+                        "key": "verification",
+                        "label": "Verification",
+                        "url": reverse("core:request_list_filtered", kwargs={"filter_key": "verification"}),
+                    },
+                    {
+                        "key": "done",
+                        "label": "Done",
+                        "url": reverse("core:request_list_filtered", kwargs={"filter_key": "done"}),
+                    },
+                    {
+                        "key": "rejected",
+                        "label": "Rejected",
+                        "url": reverse("core:request_list_filtered", kwargs={"filter_key": "rejected"}),
+                    },
+                    {
+                        "key": "backjob",
+                        "label": "Back Job",
+                        "url": reverse("core:request_list_filtered", kwargs={"filter_key": "backjob"}),
+                    },
+                ]
+            )
+    if request_items:
+        menu_sections.append({"heading": "REQUESTS", "items": request_items})
+
+    return {
+        "activePage": active_page,
+        "currentUser": {
+            "name": str(request.current_user.name or "").strip() or "Super Admin",
+        },
+        "logoutUrl": reverse("logout"),
+        "menuSections": menu_sections,
+        "messages": [str(item) for item in messages.get_messages(request)],
+    }
+
+
+def _build_profile_ui_payload(current_user, profile_form, password_form):
+    profile_name = str(current_user.name or "").strip()
+    return {
+        "profileImageData": _profile_image_data_uri(current_user),
+        "profileInitial": (profile_name[:1] or "U").upper(),
+        "user": {
+            "userid": current_user.userid,
+            "name": current_user.name or "",
+            "username": current_user.username or "",
+            "department": current_user.userdepartment or "",
+            "address": current_user.useraddress or "",
+            "contact": current_user.usercontact or "",
+            "position": current_user.userposition or "",
+            "status": current_user.userstatus or "",
+        },
+        "profileFormFields": _serialize_form_fields(profile_form),
+        "passwordFormFields": _serialize_form_fields(password_form),
+    }
+
+
+def _render_core_react_page(request, active_page, page_type, page_payload):
+    return render(
+        request,
+        "core/app_react.html",
+        {
+            "shell_ui": _build_shell_ui_payload(request, active_page),
+            "page_type": page_type,
+            "page_payload": page_payload,
+        },
+    )
+
+
 def _build_entity_ui_payload(entity, config, form, records, editing):
     column_labels = config.get("column_labels", {})
     table_headers = [{"key": col, "label": column_labels.get(col, col)} for col in config["table_columns"]]
@@ -535,14 +782,7 @@ def _build_entity_ui_payload(entity, config, form, records, editing):
             }
         )
 
-    form_fields = [
-        {
-            "label": field.label,
-            "widgetHtml": str(field),
-            "errors": [str(error) for error in field.errors],
-        }
-        for field in form
-    ]
+    form_fields = _serialize_form_fields(form)
 
     return {
         "entity": entity,
@@ -685,21 +925,7 @@ def entity_list(request, entity):
 
     records = model.objects.all().order_by(pk_name)
     entity_ui = _build_entity_ui_payload(entity, config, form, records, editing=None)
-    context = {
-        "active_page": config["active_page"],
-        "current_user": request.current_user,
-        "permissions": request.current_permissions,
-        "entity": entity,
-        "title": config["title"],
-        "records": records,
-        "form": form,
-        "pk_name": pk_name,
-        "table_columns": config["table_columns"],
-        "table_headers": [],
-        "entity_ui": entity_ui,
-        "editing": None,
-    }
-    return render(request, "core/entity_list.html", context)
+    return _render_core_react_page(request, config["active_page"], "entity", entity_ui)
 
 
 @superadmin_required
@@ -725,21 +951,7 @@ def entity_edit(request, entity, pk):
 
     records = model.objects.all().order_by(pk_name)
     entity_ui = _build_entity_ui_payload(entity, config, form, records, editing=obj)
-    context = {
-        "active_page": config["active_page"],
-        "current_user": request.current_user,
-        "permissions": request.current_permissions,
-        "entity": entity,
-        "title": config["title"],
-        "records": records,
-        "form": form,
-        "pk_name": pk_name,
-        "table_columns": config["table_columns"],
-        "table_headers": [],
-        "entity_ui": entity_ui,
-        "editing": obj,
-    }
-    return render(request, "core/entity_list.html", context)
+    return _render_core_react_page(request, config["active_page"], "entity", entity_ui)
 
 
 @superadmin_required
@@ -870,22 +1082,9 @@ def request_list(request, filter_key="all"):
         "backjob": len([r for r in all_records if _match_request_filter(r, "backjob")]),
     }
 
-    context = {
-        "active_page": filter_key if filter_key != "all" else "allrequest",
-        "current_user": request.current_user,
-        "permissions": request.current_permissions,
-        "records": filtered_records,
-        "form": form,
-        "filter_key": filter_key,
-        "filter_label": REQUEST_FILTER_LABELS[filter_key],
-        "counts": counts,
-        "query": request.GET.get("q", "").strip(),
-        "is_user_request_mode": is_user_request_mode,
-        "is_superadmin": request.current_role == ROLE_SUPERADMIN,
-        "today_date": timezone.localdate(),
-        "next_request_no": _next_pk(TblRequest) if is_user_request_mode else None,
-    }
-    context["request_ui"] = _build_request_ui_payload(
+    today_date = timezone.localdate()
+    next_request_no = _next_pk(TblRequest) if is_user_request_mode else None
+    request_ui = _build_request_ui_payload(
         request=request,
         filter_key=filter_key,
         form=form,
@@ -894,10 +1093,11 @@ def request_list(request, filter_key="all"):
         query=request.GET.get("q", "").strip(),
         is_user_request_mode=is_user_request_mode,
         is_superadmin=request.current_role == ROLE_SUPERADMIN,
-        today_date=context["today_date"],
-        next_request_no=context["next_request_no"],
+        today_date=today_date,
+        next_request_no=next_request_no,
     )
-    return render(request, "core/requests_list.html", context)
+    active_page = filter_key if filter_key != "all" else "allrequest"
+    return _render_core_react_page(request, active_page, "requests", request_ui)
 
 
 @superadmin_required

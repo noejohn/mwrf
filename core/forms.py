@@ -10,6 +10,7 @@ from .models import (
     TblUsers,
     TblWorkType,
 )
+from .security import hash_password, verify_user_password
 
 
 class BaseStyledModelForm(forms.ModelForm):
@@ -22,6 +23,11 @@ class BaseStyledModelForm(forms.ModelForm):
 
 class UserForm(BaseStyledModelForm):
     image_file = forms.FileField(required=False)
+    confirm_password = forms.CharField(
+        required=False,
+        label="Confirm Password",
+        widget=forms.PasswordInput(render_value=True),
+    )
 
     class Meta:
         model = TblUsers
@@ -37,6 +43,13 @@ class UserForm(BaseStyledModelForm):
         ]
         widgets = {
             "userpassword": forms.PasswordInput(render_value=True),
+            "userposition": forms.Select(
+                choices=(
+                    ("USER", "USER"),
+                    ("ADMIN", "ADMIN"),
+                    ("SUPER ADMIN", "SUPERADMIN"),
+                )
+            ),
             "userstatus": forms.Select(
                 choices=(
                     ("ACTIVE", "ACTIVE"),
@@ -45,8 +58,76 @@ class UserForm(BaseStyledModelForm):
             ),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["userdepartment"].label = "Department"
+        self.fields["useraddress"].label = "Address"
+        self.fields["usercontact"].label = "Contact"
+        self.fields["userposition"].label = "Role"
+        self.fields["userpassword"].label = "Password"
+        self.order_fields(
+            [
+                "name",
+                "userdepartment",
+                "useraddress",
+                "usercontact",
+                "userposition",
+                "username",
+                "userpassword",
+                "confirm_password",
+                "userstatus",
+                "image_file",
+            ]
+        )
+        current_value = str(getattr(self.instance, "userposition", "") or "").strip().upper().replace("-", " ")
+        if current_value == "SUPERADMIN":
+            current_value = "SUPER ADMIN"
+        if current_value == "ADMINISTRATOR":
+            current_value = "ADMIN"
+        if current_value not in {"USER", "ADMIN", "SUPER ADMIN"}:
+            current_value = "USER"
+        self.initial.setdefault("userposition", current_value)
+
+    def clean_username(self):
+        username = str(self.cleaned_data.get("username", "")).strip()
+        if not username:
+            raise forms.ValidationError("Username is required.")
+        exists = TblUsers.objects.filter(username__iexact=username).exclude(userid=self.instance.userid).exists()
+        if exists:
+            raise forms.ValidationError("This username is already taken.")
+        return username
+
+    def clean(self):
+        cleaned = super().clean()
+        password = str(cleaned.get("userpassword", ""))
+        confirm_password = str(cleaned.get("confirm_password", ""))
+        is_create = not bool(self.instance and self.instance.pk)
+        previous_password = str(getattr(self.instance, "userpassword", "") or "")
+
+        if is_create and not password:
+            self.add_error("userpassword", "Password is required.")
+        if password and len(password) < 6:
+            self.add_error("userpassword", "Password must be at least 6 characters.")
+        if password and len(password) > 50:
+            self.add_error("userpassword", "Password must be at most 50 characters.")
+
+        password_changed = bool(password and password != previous_password)
+        if is_create or password_changed:
+            if not confirm_password:
+                self.add_error("confirm_password", "Please confirm the password.")
+            elif password != confirm_password:
+                self.add_error("confirm_password", "Passwords do not match.")
+        elif confirm_password and password != confirm_password:
+            self.add_error("confirm_password", "Passwords do not match.")
+        return cleaned
+
     def save(self, commit=True):
         instance = super().save(commit=False)
+        raw_password = str(self.cleaned_data.get("userpassword", "") or "")
+        previous_password = str(getattr(self.instance, "userpassword", "") or "")
+        password_changed = bool(raw_password and raw_password != previous_password)
+        if password_changed:
+            instance.userpassword = hash_password(raw_password)
         uploaded = self.cleaned_data.get("image_file")
         if uploaded:
             instance.userimage = uploaded.read()
@@ -61,36 +142,56 @@ class DepartmentForm(BaseStyledModelForm):
     class Meta:
         model = TblDepartment
         fields = ["depname"]
+        labels = {
+            "depname": "Department",
+        }
 
 
 class MachineForm(BaseStyledModelForm):
     class Meta:
         model = TblMachineGroup
         fields = ["machinename"]
+        labels = {
+            "machinename": "Machine Group",
+        }
 
 
 class WorkTypeForm(BaseStyledModelForm):
     class Meta:
         model = TblWorkType
         fields = ["worktype"]
+        labels = {
+            "worktype": "Type of Work",
+        }
 
 
 class StatusForm(BaseStyledModelForm):
     class Meta:
         model = TblStatus
         fields = ["status"]
+        labels = {
+            "status": "Type of Request Status",
+        }
 
 
 class ApprovalForm(BaseStyledModelForm):
     class Meta:
         model = TblApproval
         fields = ["approvalname"]
+        labels = {
+            "approvalname": "Approving Person",
+        }
 
 
 class PersonnelForm(BaseStyledModelForm):
     class Meta:
         model = TblPersonnel
         fields = ["personnelname", "personneldept", "personneldesig"]
+        labels = {
+            "personnelname": "Full Name",
+            "personneldept": "Department",
+            "personneldesig": "Designation",
+        }
 
 
 class RequestForm(BaseStyledModelForm):
@@ -258,7 +359,7 @@ class ChangePasswordForm(forms.Form):
 
     def clean_current_password(self):
         value = str(self.cleaned_data.get("current_password", ""))
-        if not self.user or value != str(self.user.userpassword):
+        if not self.user or not verify_user_password(self.user, value):
             raise forms.ValidationError("Current password is incorrect.")
         return value
 

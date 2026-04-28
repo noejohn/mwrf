@@ -1,0 +1,25 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MWRF Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
+</head>
+<body>
+    {{ shell_ui|json_script:"shell-ui-data" }}
+    {{ page_payload|json_script:"page-ui-data" }}
+    <script>
+        window.CORE_PAGE_TYPE = "{{ page_type|escapejs }}";
+        window.CORE_CSRF_TOKEN = "{{ csrf_token|escapejs }}";
+    </script>
+    <div id="coreReactRoot"></div>
+
+    <script type="module" src="{% static 'vite/assets/core_app.js' %}"></script>
+</body>
+</html>
+

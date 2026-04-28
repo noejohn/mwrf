@@ -26,6 +26,8 @@ urlpatterns = [
     path('register/', core_views.register_page, name='register'),
     path('auth/login/', core_views.login_api, name='login_api'),
     path('auth/register/', core_views.register_api, name='register_api'),
+    path('auth/jwt/verify/', core_views.verify_jwt_api, name='verify_jwt_api'),
+    path('api/', include('core.api_urls')),
     path('logout/', core_views.logout_view, name='logout'),
     path('dashboard/', include('core.urls')),
     path('admin/', admin.site.urls),
