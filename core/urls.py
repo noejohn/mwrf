@@ -16,6 +16,7 @@ urlpatterns = [
     path("requests/my/", views.request_list, {"user_page_mode": "my"}, name="request_my"),
     path("requests/<int:pk>/user-verify/", views.request_user_verify, name="request_user_verify"),
     path("requests/<int:pk>/user-backjob/", views.request_user_backjob, name="request_user_backjob"),
+    path("requests/<int:pk>/reference-file/", views.request_reference_file, name="request_reference_file"),
     path("requests/<str:filter_key>/", views.request_list, name="request_list_filtered"),
     path("requests/<int:pk>/delete/", views.request_delete, name="request_delete"),
     path("requests/<int:pk>/<str:action>/", views.request_action, name="request_action"),

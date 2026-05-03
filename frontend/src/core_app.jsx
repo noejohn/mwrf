@@ -1022,6 +1022,25 @@ window.ReactDOM = ReactDOMClient;
                             <p><b>Type of Work:</b> <span>{selected ? selected.worktype : "-"}</span></p>
                             <p><b>Approving Person:</b> <span>{selected ? selected.approval : "-"}</span></p>
                             <p><b>Date Needed:</b> <span>{selected ? selected.dateneeded : "-"}</span></p>
+                            <div className="request-reference-block">
+                                <p><b>Reference File:</b></p>
+                                {selected && selected.hasReferenceFile && selected.referenceFileUrl ? (
+                                    <div className="request-reference-content">
+                                        {selected.referenceIsImage ? (
+                                            <img src={selected.referenceFileUrl} alt={selected.referenceFileName || "Request reference"} className="request-reference-image" />
+                                        ) : selected.referenceIsVideo ? (
+                                            <video className="request-reference-video" controls src={selected.referenceFileUrl}>
+                                                Your browser does not support video preview.
+                                            </video>
+                                        ) : (
+                                            <div className="request-reference-file">{selected.referenceFileName || "Attached file uploaded."}</div>
+                                        )}
+                                        <small className="request-reference-name">{selected.referenceFileName || ""}</small>
+                                    </div>
+                                ) : (
+                                    <span className="request-reference-empty">No reference file uploaded.</span>
+                                )}
+                            </div>
                         </div>
 
                         <div className="preview-col">

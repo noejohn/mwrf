@@ -464,6 +464,15 @@ class UserRequestForm(BaseStyledModelForm):
                 self.add_error("approval", "Selected approving person must be listed in Approval for the selected requested department.")
         return cleaned
 
+    def clean_reference_file(self):
+        uploaded = self.cleaned_data.get("reference_file")
+        if not uploaded:
+            return uploaded
+        max_size = 5 * 1024 * 1024
+        if uploaded.size and uploaded.size > max_size:
+            raise forms.ValidationError("Reference file must be 5MB or smaller.")
+        return uploaded
+
 
 class UserProfileForm(BaseStyledModelForm):
     image_file = forms.FileField(required=False, label="Profile Image")

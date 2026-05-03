@@ -3,11 +3,12 @@ import base64
 import imghdr
 from datetime import date
 from functools import wraps
+from urllib.parse import quote
 
 from django.contrib import messages
 from django.db import DataError
 from django.db.models import Max
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -35,6 +36,7 @@ from .models import (
     TblMachineGroup,
     TblPersonnel,
     TblRequest,
+    TblRequestReference,
     TblStatus,
     TblUsers,
     TblWorkType,
@@ -763,6 +765,48 @@ def _profile_image_data_uri(user):
     return f"data:image/{image_type};base64,{encoded}"
 
 
+def _save_request_reference_file(request_obj, uploaded_file):
+    if not uploaded_file:
+        return
+
+    raw = uploaded_file.read() or b""
+    if not raw:
+        return
+
+    filename = str(getattr(uploaded_file, "name", "") or "").strip()[:255]
+    content_type = str(getattr(uploaded_file, "content_type", "") or "").strip()[:100]
+    record = TblRequestReference.objects.filter(requestno=request_obj.requestno).first()
+    if record:
+        record.filename = filename
+        record.contenttype = content_type
+        record.filedata = raw
+        record.uploadedat = timezone.localdate()
+        record.save(update_fields=["filename", "contenttype", "filedata", "uploadedat"])
+        return
+
+    TblRequestReference.objects.create(
+        requestno=request_obj.requestno,
+        filename=filename,
+        contenttype=content_type,
+        filedata=raw,
+        uploadedat=timezone.localdate(),
+    )
+
+
+def _request_reference_map(records):
+    request_ids = [int(item.requestno) for item in records if getattr(item, "requestno", None) is not None]
+    if not request_ids:
+        return {}
+
+    mapping = {}
+    for ref in TblRequestReference.objects.filter(requestno__in=request_ids).only("requestno", "filename", "contenttype"):
+        mapping[int(ref.requestno)] = {
+            "filename": str(ref.filename or "").strip(),
+            "contenttype": str(ref.contenttype or "").strip(),
+        }
+    return mapping
+
+
 def _build_dashboard_ui_payload(requests_qs, counts, status_rows):
     return {
         "counts": counts,
@@ -1049,6 +1093,8 @@ def _build_request_ui_payload(
     today_date,
     next_request_no,
 ):
+    reference_map = _request_reference_map(records)
+
     def _string(value, default="-"):
         text = str(value or "").strip()
         return text if text else default
@@ -1056,6 +1102,10 @@ def _build_request_ui_payload(
     def _serialize_request(req, index):
         verified_by_value = _string(req.verifiedby)
         verified_date_value = _string(req.verifieddate) if verified_by_value != "-" else "-"
+        reference_payload = reference_map.get(int(req.requestno), {})
+        reference_name = str(reference_payload.get("filename", "")).strip()
+        reference_content_type = str(reference_payload.get("contenttype", "")).strip()
+        has_reference = bool(reference_name)
         return {
             "row_no": index,
             "requestno": str(req.requestno),
@@ -1076,6 +1126,12 @@ def _build_request_ui_payload(
             "findings": _string(req.findings),
             "verifiednote": _string(req.verifiednote),
             "verifieddate": verified_date_value,
+            "hasReferenceFile": has_reference,
+            "referenceFileName": reference_name,
+            "referenceContentType": reference_content_type,
+            "referenceFileUrl": reverse("core:request_reference_file", kwargs={"pk": int(req.requestno)}) if has_reference else "",
+            "referenceIsImage": reference_content_type.lower().startswith("image/"),
+            "referenceIsVideo": reference_content_type.lower().startswith("video/"),
         }
 
     form_fields = []
@@ -1305,6 +1361,7 @@ def request_list(request, filter_key="all", user_page_mode=None):
         form = form_class(request.POST, request.FILES, current_user=request.current_user)
         if form.is_valid():
             obj = form.save(commit=False)
+            uploaded_reference = form.cleaned_data.get("reference_file") if "reference_file" in form.cleaned_data else None
             today = timezone.localdate()
             obj.requestdate = today
             if is_user_request_mode:
@@ -1327,6 +1384,8 @@ def request_list(request, filter_key="all", user_page_mode=None):
                 obj.status = obj.status or "NEW"
                 obj.notes = obj.notes or ""
             obj.save()
+            if is_user_request_mode and uploaded_reference:
+                _save_request_reference_file(obj, uploaded_reference)
             messages.success(request, "Request created.")
             if is_user_request_mode:
                 return redirect("core:request_make")
@@ -1830,6 +1889,24 @@ def request_user_backjob(request, pk):
 
 
 @superadmin_required
+def request_reference_file(request, pk):
+    if not request.current_permissions.get("can_request_action"):
+        raise Http404("Not found.")
+
+    request_obj = get_object_or_404(TblRequest, requestno=pk)
+    reference = get_object_or_404(TblRequestReference, requestno=request_obj.requestno)
+    raw = bytes(reference.filedata or b"")
+    if not raw:
+        raise Http404("No file found.")
+
+    content_type = str(reference.contenttype or "").strip() or "application/octet-stream"
+    filename = str(reference.filename or f"request-{request_obj.requestno}-reference").strip() or f"request-{request_obj.requestno}-reference"
+    response = HttpResponse(raw, content_type=content_type)
+    response["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(filename)}"
+    return response
+
+
+@superadmin_required
 def request_delete(request, pk):
     if not request.current_permissions["can_request_delete"]:
         messages.error(request, "Only super admin can delete requests.")
@@ -1838,6 +1915,7 @@ def request_delete(request, pk):
     if request.method != "POST":
         return redirect("core:request_list")
     request_obj = get_object_or_404(TblRequest, requestno=pk)
+    TblRequestReference.objects.filter(requestno=request_obj.requestno).delete()
     request_obj.delete()
     messages.success(request, f"Request #{pk} deleted.")
     return redirect("core:request_list")

@@ -125,4 +125,20 @@ class TblRequest(models.Model):
     def __str__(self) -> str:
         return f"REQ-{self.requestno}"
 
+
+class TblRequestReference(models.Model):
+    referenceno = models.AutoField(db_column="referenceno", primary_key=True)
+    requestno = models.IntegerField(db_column="requestno", unique=True)
+    filename = models.CharField(db_column="filename", max_length=255, default="", blank=True)
+    contenttype = models.CharField(db_column="contenttype", max_length=100, default="", blank=True)
+    filedata = models.BinaryField(db_column="filedata", default=bytes)
+    uploadedat = models.DateField(db_column="uploadedat", default=date.today)
+
+    class Meta:
+        managed = False
+        db_table = "tblrequestreference"
+
+    def __str__(self) -> str:
+        return f"REF-{self.referenceno} for REQ-{self.requestno}"
+
 # Create your models here.
