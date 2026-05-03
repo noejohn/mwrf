@@ -74,6 +74,7 @@ class TblStatus(models.Model):
 class TblApproval(models.Model):
     approvalno = models.IntegerField(db_column="APPROVALNO", primary_key=True)
     approvalname = models.CharField(db_column="APPROVALNAME", max_length=50)
+    approvaldept = models.CharField(db_column="APPROVALDEPT", max_length=50)
 
     class Meta:
         managed = False
@@ -86,7 +87,7 @@ class TblApproval(models.Model):
 class TblPersonnel(models.Model):
     personnelno = models.AutoField(db_column="personnelno", primary_key=True)
     personnelname = models.CharField(db_column="personnelname", max_length=50)
-    personneldept = models.CharField(db_column="personneldept", max_length=25)
+    personneldept = models.CharField(db_column="personneldept", max_length=50)
     personneldesig = models.CharField(db_column="personneldesig", max_length=25)
 
     class Meta:

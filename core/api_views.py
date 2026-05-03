@@ -17,6 +17,8 @@ from .views import (
     ENTITY_CONFIG,
     REQUEST_FILTER_LABELS,
     ROLE_SUPERADMIN,
+    STATUS_CLOSED,
+    STATUS_PENDING_APPROVAL,
     _build_dashboard_ui_payload,
     _build_entity_ui_payload,
     _build_permissions,
@@ -186,10 +188,10 @@ class ApiDashboardView(APIView):
                 counts[normalized_category] += 1
 
         status_rows = [
-            ("New", counts["new"]),
+            ("Current / Approval", counts["new"]),
             ("On-going", counts["on_going"]),
             ("Verification", counts["verification"]),
-            ("Done", counts["done"]),
+            ("Closed", counts["done"]),
             ("Rejected", counts["rejected"]),
             ("Back-job", counts["backjob"]),
         ]
@@ -300,12 +302,13 @@ class ApiRequestsView(APIView):
         from .forms import RequestForm, UserRequestForm
 
         form_class = UserRequestForm if is_user_request_mode else RequestForm
-        initial_data = {"status": "NEW"}
+        initial_data = {"status": STATUS_PENDING_APPROVAL}
         if is_user_request_mode:
             initial_data.update(
                 {
                     "requestor": user.name,
                     "department": user.userdepartment,
+                    "requestdept": user.userdepartment,
                     "dateupdated": timezone.localdate(),
                     "verifieddate": timezone.localdate(),
                 }
@@ -353,13 +356,14 @@ class ApiRequestsView(APIView):
             "backjob": len([r for r in all_records if _match_request_filter(r, "backjob")]),
         }
         payload = _build_request_ui_payload(
-            request=type("ReqCtx", (), {"current_permissions": permissions})(),
+            request=type("ReqCtx", (), {"current_permissions": permissions, "current_user": user})(),
             filter_key=filter_key,
             form=form,
             records=filtered_records,
             counts=counts,
             query=request.GET.get("q", "").strip(),
             is_user_request_mode=is_user_request_mode,
+            user_page_mode="my" if is_user_request_mode else "admin",
             is_superadmin=auth_ctx["role"] == ROLE_SUPERADMIN,
             today_date=timezone.localdate(),
             next_request_no=_next_pk(TblRequest) if is_user_request_mode else None,
@@ -389,21 +393,21 @@ class ApiRequestsView(APIView):
         if is_user_request_mode:
             obj.requestor = user.name
             obj.department = obj.department or user.userdepartment
-            obj.personnel = obj.personnel or "UNASSIGNED"
-            obj.status = obj.status or "NEW"
-            obj.notes = obj.notes or ""
-            obj.dateupdated = obj.dateupdated or today
-            obj.verifieddate = obj.verifieddate or today
-            obj.verifiedby = obj.verifiedby or ""
-            obj.findings = obj.findings or ""
-            obj.verifiednote = obj.verifiednote or ""
+            obj.personnel = "UNASSIGNED"
+            obj.status = STATUS_PENDING_APPROVAL
+            obj.notes = ""
+            obj.dateupdated = today
+            obj.verifieddate = today
+            obj.verifiedby = ""
+            obj.findings = ""
+            obj.verifiednote = ""
         else:
             obj.dateupdated = today
             obj.verifieddate = today
             obj.verifiedby = ""
             obj.findings = ""
             obj.verifiednote = ""
-            obj.status = obj.status or "NEW"
+            obj.status = obj.status or STATUS_PENDING_APPROVAL
             obj.notes = obj.notes or ""
         obj.save()
         return self.get(request, filter_key=filter_key)
@@ -419,9 +423,16 @@ class ApiRequestActionView(APIView):
             return Response({"ok": False, "message": "You do not have permission to update request status."}, status=403)
         request_obj = get_object_or_404(TblRequest, requestno=pk)
         action_map = {
-            "verify": "DONE",
+            "verify": STATUS_CLOSED,
             "reject": "REJECTED",
             "backjob": "BACK JOB",
+            "approve": "APPROVED",
+        }
+        findings_map = {
+            "verify": "VERIFIED",
+            "reject": "REJECTED",
+            "backjob": "BACK JOB",
+            "approve": "APPROVED",
         }
         target_status = action_map.get(action)
         if not target_status:
@@ -429,6 +440,7 @@ class ApiRequestActionView(APIView):
         note = str(request.data.get("note", "")).strip()
         today = timezone.localdate()
         request_obj.status = target_status
+        request_obj.findings = findings_map.get(action, "")
         request_obj.dateupdated = today
         request_obj.verifiedby = user.name
         request_obj.verifieddate = today

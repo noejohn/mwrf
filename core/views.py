@@ -1,9 +1,11 @@
 import json
 import base64
 import imghdr
+from datetime import date
 from functools import wraps
 
 from django.contrib import messages
+from django.db import DataError
 from django.db.models import Max
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -106,10 +108,11 @@ ENTITY_CONFIG = {
         "form": ApprovalForm,
         "title": "Approving Personnel",
         "active_page": "approval",
-        "table_columns": ["approvalno", "approvalname"],
+        "table_columns": ["approvalno", "approvalname", "approvaldept"],
         "column_labels": {
             "approvalno": "No.",
             "approvalname": "Full Name",
+            "approvaldept": "Department",
         },
         "manual_pk": True,
     },
@@ -117,13 +120,27 @@ ENTITY_CONFIG = {
 
 REQUEST_FILTER_LABELS = {
     "all": "All Machine Request",
-    "current": "Current Machine Request",
+    "current": "Current / Approval Queue",
     "on-going": "On going machine request",
     "verification": "Verification Requests",
-    "done": "Done machine work request",
+    "done": "Closed machine work request",
     "rejected": "Rejected machine request",
     "backjob": "Backjob machine request",
 }
+
+STATUS_PENDING_APPROVAL = "PENDING APPROVAL"
+STATUS_APPROVED = "APPROVED"
+STATUS_ON_GOING = "ON GOING"
+STATUS_FOR_VERIFICATION = "FOR VERIFICATION"
+STATUS_BACK_JOB = "BACK JOB"
+STATUS_CLOSED = "CLOSED"
+STATUS_REJECTED = "REJECTED"
+
+REQUEST_FINDINGS_OPTIONS = [
+    "VERIFIED",
+    "BACK JOB",
+    "REJECTED",
+]
 
 REQUEST_TABLE_COLUMNS_SUPERADMIN = [
     ("row_no", "#"),
@@ -178,29 +195,89 @@ def _normalize_status(value):
     return "".join(ch for ch in (value or "").lower() if ch.isalnum())
 
 
-def _status_category(value):
+def _status_equals(left, right):
+    return _normalize_status(left) == _normalize_status(right)
+
+
+def _is_pending_approval_status(value):
     normalized = _normalize_status(value)
-    if "reject" in normalized:
+    if not normalized or normalized == "new":
+        return True
+    return normalized in {_normalize_status(STATUS_PENDING_APPROVAL), "pending"}
+
+
+def _is_approved_status(value):
+    return _status_equals(value, STATUS_APPROVED)
+
+
+def _is_on_going_status(value):
+    normalized = _normalize_status(value)
+    return normalized in {_normalize_status(STATUS_ON_GOING), "ongoing"}
+
+
+def _is_verification_status(value):
+    normalized = _normalize_status(value)
+    return normalized in {_normalize_status(STATUS_FOR_VERIFICATION), "verification"} or "verify" in normalized
+
+
+def _is_back_job_status(value):
+    return _status_equals(value, STATUS_BACK_JOB)
+
+
+def _is_closed_status(value):
+    normalized = _normalize_status(value)
+    return normalized in {_normalize_status(STATUS_CLOSED), "done", "complete", "verified"}
+
+
+def _is_rejected_status(value):
+    normalized = _normalize_status(value)
+    return normalized in {_normalize_status(STATUS_REJECTED), "reject", "rejected"}
+
+
+def _canonical_status(value):
+    if _is_closed_status(value):
+        return STATUS_CLOSED
+    if _is_rejected_status(value):
+        return STATUS_REJECTED
+    if _is_back_job_status(value):
+        return STATUS_BACK_JOB
+    if _is_verification_status(value):
+        return STATUS_FOR_VERIFICATION
+    if _is_on_going_status(value):
+        return STATUS_ON_GOING
+    if _is_approved_status(value):
+        return STATUS_APPROVED
+    if _is_pending_approval_status(value):
+        return STATUS_PENDING_APPROVAL
+    return str(value or "").strip()
+
+
+def _status_category(value):
+    if _is_rejected_status(value):
         return "rejected"
-    if "back" in normalized and "job" in normalized:
+    if _is_back_job_status(value):
         return "backjob"
-    if "verify" in normalized:
+    if _is_verification_status(value):
         return "verification"
-    if "ongoing" in normalized:
+    if _is_on_going_status(value):
         return "on-going"
-    if "done" in normalized or "complete" in normalized:
+    if _is_closed_status(value):
         return "done"
-    if normalized == "new" or not normalized:
+    if _is_pending_approval_status(value) or _is_approved_status(value):
         return "new"
     return "other"
 
 
 def _match_request_filter(request_obj, filter_key):
     category = _status_category(request_obj.status)
+    personnel_value = str(getattr(request_obj, "personnel", "") or "").strip()
+    has_assigned_personnel = bool(personnel_value) and personnel_value.upper() != "UNASSIGNED"
     if filter_key == "all":
-        return category != "backjob"
+        return True
     if filter_key == "current":
-        return category in {"new", "on-going", "verification", "backjob"}
+        return category == "new"
+    if filter_key == "on-going":
+        return category == "on-going" and has_assigned_personnel
     return category == filter_key
 
 
@@ -223,7 +300,126 @@ def _resolve_role(position):
     return ROLE_USER
 
 
-def _build_permissions(role):
+def _department_approver_map():
+    department_map = {
+        str(dep or "").strip(): []
+        for dep in TblDepartment.objects.order_by("depname").values_list("depname", flat=True)
+        if str(dep or "").strip()
+    }
+    approvals = TblApproval.objects.order_by("approvaldept", "approvalname").only("approvaldept", "approvalname")
+    for item in approvals:
+        department = str(item.approvaldept or "").strip()
+        name = str(item.approvalname or "").strip()
+        if not department or not name:
+            continue
+        department_items = department_map.setdefault(department, [])
+        if name not in department_items:
+            department_items.append(name)
+    return department_map
+
+
+def _approval_admins_by_department():
+    mapping = {"": []}
+    approvals = TblApproval.objects.order_by("approvaldept", "approvalname").only("approvalname", "approvaldept")
+    for item in approvals:
+        name = str(item.approvalname or "").strip()
+        department = str(item.approvaldept or "").strip()
+        if not name:
+            continue
+        if name not in mapping[""]:
+            mapping[""].append(name)
+        if department:
+            department_items = mapping.setdefault(department, [])
+            if name not in department_items:
+                department_items.append(name)
+    return mapping
+
+
+def _department_personnel_map():
+    mapping = {"": []}
+    personnel_rows = TblPersonnel.objects.order_by("personnelname").only("personnelname", "personneldept")
+    for item in personnel_rows:
+        name = str(item.personnelname or "").strip()
+        department = str(item.personneldept or "").strip()
+        if not name:
+            continue
+        if name not in mapping[""]:
+            mapping[""].append(name)
+        if department:
+            dept_items = mapping.setdefault(department, [])
+            if name not in dept_items:
+                dept_items.append(name)
+    return mapping
+
+
+def _request_status_options():
+    values = []
+    seen = set()
+    for item in TblStatus.objects.order_by("status").values_list("status", flat=True):
+        status_text = str(item or "").strip()
+        normalized = _normalize_status(status_text)
+        if status_text and normalized and normalized not in seen:
+            seen.add(normalized)
+            values.append(status_text)
+    return values
+
+
+def _is_approval_person(user):
+    name = str(getattr(user, "name", "") or "").strip()
+    if not name:
+        return False
+    return TblApproval.objects.filter(approvalname__iexact=name).exists()
+
+
+def _is_assigned_approver_for_request(user, request_obj):
+    approver_name = str(getattr(request_obj, "approval", "") or "").strip().lower()
+    current_name = str(getattr(user, "name", "") or "").strip().lower()
+    if not approver_name or not current_name:
+        return False
+    return approver_name == current_name
+
+
+def _is_request_department_admin(user, role, request_obj):
+    if role == ROLE_SUPERADMIN:
+        return True
+    if role != ROLE_ADMIN:
+        return False
+    department = str(getattr(user, "userdepartment", "") or "").strip().lower()
+    requested_department = str(getattr(request_obj, "requestdept", "") or "").strip().lower()
+    if not department or not requested_department:
+        return False
+    return department == requested_department
+
+
+def _build_permissions(role, user=None):
+    if role == ROLE_SUPERADMIN:
+        return {
+            "can_view_dashboard": True,
+            "can_manage_users": True,
+            "can_manage_departments": True,
+            "can_manage_personnel": True,
+            "can_manage_machines": True,
+            "can_manage_worktypes": True,
+            "can_manage_statuses": True,
+            "can_manage_approvals": True,
+            "can_view_requests": True,
+            "can_request_action": True,
+            "can_request_operations": True,
+            "can_request_approval": True,
+            "can_request_verification_fields": True,
+            "can_request_create": True,
+            "can_request_delete": True,
+            "can_toggle_users": True,
+        }
+
+    is_approval_person = bool(user is not None and _is_approval_person(user))
+    can_request_operations = role == ROLE_SUPERADMIN or is_approval_person
+    # Approval persons are limited to operational request fields only.
+    # Full approval/verification controls stay with admin/superadmin accounts
+    # that are not tagged as approval persons.
+    can_request_approval = role == ROLE_SUPERADMIN or (role == ROLE_ADMIN and not is_approval_person)
+    can_request_action = can_request_operations or can_request_approval
+
     return {
         "can_view_dashboard": role in {ROLE_SUPERADMIN, ROLE_ADMIN},
         "can_manage_users": role == ROLE_SUPERADMIN,
@@ -234,7 +430,10 @@ def _build_permissions(role):
         "can_manage_statuses": role in {ROLE_SUPERADMIN, ROLE_ADMIN},
         "can_manage_approvals": role in {ROLE_SUPERADMIN, ROLE_ADMIN},
         "can_view_requests": role in ALLOWED_DASHBOARD_ROLES,
-        "can_request_action": role in {ROLE_SUPERADMIN, ROLE_ADMIN},
+        "can_request_action": can_request_action,
+        "can_request_operations": can_request_operations,
+        "can_request_approval": can_request_approval,
+        "can_request_verification_fields": can_request_approval,
         "can_request_create": role in {ROLE_SUPERADMIN, ROLE_USER},
         "can_request_delete": role == ROLE_SUPERADMIN,
         "can_toggle_users": role == ROLE_SUPERADMIN,
@@ -292,7 +491,7 @@ def superadmin_required(view_func):
         request.session["mwrf_role_label"] = user.userposition
         request.current_user = user
         request.current_role = role
-        request.current_permissions = _build_permissions(role)
+        request.current_permissions = _build_permissions(role, user=user)
         return view_func(request, *args, **kwargs)
 
     return wrapped
@@ -503,10 +702,10 @@ def dashboard_home(request):
             counts[normalized_category] += 1
 
     status_rows = [
-        ("New", counts["new"]),
+        ("Current / Approval", counts["new"]),
         ("On-going", counts["on_going"]),
         ("Verification", counts["verification"]),
-        ("Done", counts["done"]),
+        ("Closed", counts["done"]),
         ("Rejected", counts["rejected"]),
         ("Back-job", counts["backjob"]),
     ]
@@ -603,6 +802,7 @@ def _serialize_form_fields(form):
 def _build_shell_ui_payload(request, active_page):
     permissions = request.current_permissions
     menu_sections = []
+    is_user_role = request.current_role == ROLE_USER
 
     general_items = []
     if permissions.get("can_view_dashboard"):
@@ -680,14 +880,30 @@ def _build_shell_ui_payload(request, active_page):
             }
         )
     if permissions.get("can_view_requests"):
-        request_items.append(
-            {
-                "key": "allrequest",
-                "label": "All Request",
-                "url": reverse("core:request_list"),
-            }
-        )
-        if permissions.get("can_request_action"):
+        if is_user_role:
+            request_items.extend(
+                [
+                    {
+                        "key": "makerequest",
+                        "label": "Make Request",
+                        "url": reverse("core:request_make"),
+                    },
+                    {
+                        "key": "myrequest",
+                        "label": "My Request",
+                        "url": reverse("core:request_my"),
+                    },
+                ]
+            )
+        else:
+            request_items.append(
+                {
+                    "key": "allrequest",
+                    "label": "All Request",
+                    "url": reverse("core:request_list"),
+                }
+            )
+        if permissions.get("can_request_action") and not is_user_role:
             request_items.extend(
                 [
                     {
@@ -707,7 +923,7 @@ def _build_shell_ui_payload(request, active_page):
                     },
                     {
                         "key": "done",
-                        "label": "Done",
+                        "label": "Closed",
                         "url": reverse("core:request_list_filtered", kwargs={"filter_key": "done"}),
                     },
                     {
@@ -784,7 +1000,7 @@ def _build_entity_ui_payload(entity, config, form, records, editing):
 
     form_fields = _serialize_form_fields(form)
 
-    return {
+    payload = {
         "entity": entity,
         "title": config["title"],
         "editing": bool(editing),
@@ -800,6 +1016,24 @@ def _build_entity_ui_payload(entity, config, form, records, editing):
             "toggleUserTemplate": reverse("core:toggle_user_status", kwargs={"pk": 0}) if entity == "users" else "",
         },
     }
+    if entity == "approvals":
+        approval_dept_options = []
+        selected_approval_dept = ""
+        selected_approval_name = ""
+        if "approvaldept" in form.fields:
+            approval_dept_options = [
+                {"value": str(value or ""), "label": str(label or "")}
+                for value, label in form.fields["approvaldept"].choices
+            ]
+            selected_approval_dept = str(form["approvaldept"].value() or "").strip()
+        if "approvalname" in form.fields:
+            selected_approval_name = str(form["approvalname"].value() or "").strip()
+
+        payload["approvalDeptOptions"] = approval_dept_options
+        payload["approvalAdminsByDepartment"] = _approval_admins_by_department()
+        payload["selectedApprovalDept"] = selected_approval_dept
+        payload["selectedApprovalName"] = selected_approval_name
+    return payload
 
 
 def _build_request_ui_payload(
@@ -810,6 +1044,7 @@ def _build_request_ui_payload(
     counts,
     query,
     is_user_request_mode,
+    user_page_mode,
     is_superadmin,
     today_date,
     next_request_no,
@@ -819,6 +1054,8 @@ def _build_request_ui_payload(
         return text if text else default
 
     def _serialize_request(req, index):
+        verified_by_value = _string(req.verifiedby)
+        verified_date_value = _string(req.verifieddate) if verified_by_value != "-" else "-"
         return {
             "row_no": index,
             "requestno": str(req.requestno),
@@ -835,10 +1072,10 @@ def _build_request_ui_payload(
             "status": _string(req.status),
             "notes": _string(req.notes),
             "dateupdated": _string(req.dateupdated),
-            "verifiedby": _string(req.verifiedby),
+            "verifiedby": verified_by_value,
             "findings": _string(req.findings),
             "verifiednote": _string(req.verifiednote),
-            "verifieddate": _string(req.verifieddate),
+            "verifieddate": verified_date_value,
         }
 
     form_fields = []
@@ -866,12 +1103,28 @@ def _build_request_ui_payload(
     headers = REQUEST_TABLE_COLUMNS_SUPERADMIN if is_superadmin else REQUEST_TABLE_COLUMNS_STANDARD
     table_headers = [{"key": key, "label": label} for key, label in headers]
 
-    return {
+    request_dept_options = []
+    selected_request_dept = ""
+    selected_approval = ""
+    if is_user_request_mode and "requestdept" in form.fields:
+        requestdept_field = form.fields["requestdept"]
+        field_choices = getattr(requestdept_field, "choices", None)
+        if field_choices is not None:
+            request_dept_options = [{"value": str(value or ""), "label": str(label or "")} for value, label in field_choices]
+        selected_request_dept = str(form["requestdept"].value() or "").strip()
+    selected_approval_department = ""
+    if is_user_request_mode and "requestdept" in form.fields:
+        selected_approval_department = str(form["requestdept"].value() or "").strip()
+    if is_user_request_mode and "approval" in form.fields:
+        selected_approval = str(form["approval"].value() or "").strip()
+
+    payload = {
         "filterKey": filter_key,
         "filterLabel": REQUEST_FILTER_LABELS[filter_key],
         "query": query,
         "counts": counts,
         "isUserRequestMode": is_user_request_mode,
+        "userPageMode": user_page_mode,
         "isSuperadmin": is_superadmin,
         "isDoneFilter": filter_key == "done",
         "todayDate": str(today_date),
@@ -882,20 +1135,45 @@ def _build_request_ui_payload(
         "ongoingRecords": ongoing_records,
         "formFields": form_fields,
         "formFieldsByName": form_fields_by_name,
+        "requestDeptOptions": request_dept_options,
+        "departmentApprovers": _department_approver_map() if is_user_request_mode else {},
+        "selectedApprovalDepartment": selected_approval_department,
+        "selectedRequestedDept": selected_request_dept,
+        "selectedApproval": selected_approval,
         "permissions": {
             "canRequestCreate": bool(request.current_permissions.get("can_request_create")),
             "canRequestAction": bool(request.current_permissions.get("can_request_action")),
+            "canRequestOperations": bool(request.current_permissions.get("can_request_operations")),
+            "canRequestApproval": bool(request.current_permissions.get("can_request_approval")),
+            "canRequestVerificationFields": bool(request.current_permissions.get("can_request_verification_fields")),
             "canRequestDelete": bool(request.current_permissions.get("can_request_delete")),
+        },
+        "workflowStatuses": {
+            "pendingApproval": STATUS_PENDING_APPROVAL,
+            "approved": STATUS_APPROVED,
+            "onGoing": STATUS_ON_GOING,
+            "forVerification": STATUS_FOR_VERIFICATION,
+            "backJob": STATUS_BACK_JOB,
+            "closed": STATUS_CLOSED,
+            "rejected": STATUS_REJECTED,
         },
         "urls": {
             "allRequests": reverse("core:request_list"),
             "onGoingFilter": reverse("core:request_list_filtered", kwargs={"filter_key": "on-going"}),
-            "verifyTemplate": reverse("core:request_action", kwargs={"pk": 0, "action": "verify"}),
+            "approveTemplate": reverse("core:request_action", kwargs={"pk": 0, "action": "approve"}),
             "rejectTemplate": reverse("core:request_action", kwargs={"pk": 0, "action": "reject"}),
-            "backjobTemplate": reverse("core:request_action", kwargs={"pk": 0, "action": "backjob"}),
+            "updateTemplate": reverse("core:request_action", kwargs={"pk": 0, "action": "update"}),
             "deleteTemplate": reverse("core:request_delete", kwargs={"pk": 0}),
+            "userVerifyTemplate": reverse("core:request_user_verify", kwargs={"pk": 0}),
+            "userBackjobTemplate": reverse("core:request_user_backjob", kwargs={"pk": 0}),
         },
     }
+    if not is_user_request_mode:
+        payload["personnelByDepartment"] = _department_personnel_map()
+        payload["requestStatusOptions"] = _request_status_options()
+        payload["findingsOptions"] = REQUEST_FINDINGS_OPTIONS
+        payload["currentApproverName"] = str(request.current_user.name or "").strip()
+    return payload
 
 
 @superadmin_required
@@ -917,7 +1195,14 @@ def entity_list(request, entity):
                 setattr(obj, pk_name, _next_pk(model))
             if entity == "users" and not obj.userstatus:
                 obj.userstatus = "ACTIVE"
-            obj.save()
+            try:
+                obj.save()
+            except DataError:
+                messages.error(request, "One or more values are longer than the allowed database limit.")
+                form.add_error(None, "One or more values are longer than the allowed database limit.")
+                records = model.objects.all().order_by(pk_name)
+                entity_ui = _build_entity_ui_payload(entity, config, form, records, editing=None)
+                return _render_core_react_page(request, config["active_page"], "entity", entity_ui)
             messages.success(request, f"{config['title'][:-1] if config['title'].endswith('s') else config['title']} created.")
             return redirect("core:entity_list", entity=entity)
     else:
@@ -943,7 +1228,14 @@ def entity_edit(request, entity, pk):
     if request.method == "POST":
         form = form_class(request.POST, request.FILES, instance=obj)
         if form.is_valid():
-            form.save()
+            try:
+                form.save()
+            except DataError:
+                messages.error(request, "One or more values are longer than the allowed database limit.")
+                form.add_error(None, "One or more values are longer than the allowed database limit.")
+                records = model.objects.all().order_by(pk_name)
+                entity_ui = _build_entity_ui_payload(entity, config, form, records, editing=obj)
+                return _render_core_react_page(request, config["active_page"], "entity", entity_ui)
             messages.success(request, f"{config['title'][:-1] if config['title'].endswith('s') else config['title']} updated.")
             return redirect("core:entity_list", entity=entity)
     else:
@@ -987,17 +1279,28 @@ def toggle_user_status(request, pk):
 
 
 @superadmin_required
-def request_list(request, filter_key="all"):
+def request_list(request, filter_key="all", user_page_mode=None):
     if filter_key not in REQUEST_FILTER_LABELS:
         raise Http404("Unknown request filter.")
 
     can_request_create = request.current_permissions["can_request_create"]
     is_user_request_mode = request.current_role == ROLE_USER
+    if is_user_request_mode:
+        if user_page_mode is None:
+            return redirect("core:request_my")
+        if user_page_mode not in {"make", "my"}:
+            user_page_mode = "my"
+    else:
+        if user_page_mode in {"make", "my"}:
+            return redirect("core:request_list")
+        user_page_mode = "admin"
     form_class = UserRequestForm if is_user_request_mode else RequestForm
 
     if request.method == "POST":
         if not can_request_create:
             messages.error(request, "You can view requests, but cannot create new ones.")
+            if is_user_request_mode:
+                return redirect("core:request_make")
             return redirect("core:request_list_filtered", filter_key=filter_key)
         form = form_class(request.POST, request.FILES, current_user=request.current_user)
         if form.is_valid():
@@ -1007,14 +1310,14 @@ def request_list(request, filter_key="all"):
             if is_user_request_mode:
                 obj.requestor = request.current_user.name
                 obj.department = obj.department or request.current_user.userdepartment
-                obj.personnel = obj.personnel or "UNASSIGNED"
-                obj.status = obj.status or "NEW"
-                obj.notes = obj.notes or ""
-                obj.dateupdated = obj.dateupdated or today
-                obj.verifieddate = obj.verifieddate or today
-                obj.verifiedby = obj.verifiedby or ""
-                obj.findings = obj.findings or ""
-                obj.verifiednote = obj.verifiednote or ""
+                obj.personnel = "UNASSIGNED"
+                obj.status = STATUS_PENDING_APPROVAL
+                obj.notes = ""
+                obj.dateupdated = today
+                obj.verifieddate = today
+                obj.verifiedby = ""
+                obj.findings = ""
+                obj.verifiednote = ""
             else:
                 obj.dateupdated = today
                 obj.verifieddate = today
@@ -1025,14 +1328,17 @@ def request_list(request, filter_key="all"):
                 obj.notes = obj.notes or ""
             obj.save()
             messages.success(request, "Request created.")
+            if is_user_request_mode:
+                return redirect("core:request_make")
             return redirect("core:request_list_filtered", filter_key=filter_key)
     else:
-        initial_data = {"status": "NEW"}
+        initial_data = {"status": STATUS_PENDING_APPROVAL}
         if is_user_request_mode:
             initial_data.update(
                 {
                     "requestor": request.current_user.name,
                     "department": request.current_user.userdepartment,
+                    "requestdept": request.current_user.userdepartment,
                     "dateupdated": timezone.localdate(),
                     "verifieddate": timezone.localdate(),
                 }
@@ -1092,11 +1398,15 @@ def request_list(request, filter_key="all"):
         counts=counts,
         query=request.GET.get("q", "").strip(),
         is_user_request_mode=is_user_request_mode,
+        user_page_mode=user_page_mode,
         is_superadmin=request.current_role == ROLE_SUPERADMIN,
         today_date=today_date,
         next_request_no=next_request_no,
     )
-    active_page = filter_key if filter_key != "all" else "allrequest"
+    if is_user_request_mode:
+        active_page = "myrequest" if user_page_mode == "my" else "makerequest"
+    else:
+        active_page = filter_key if filter_key != "all" else "allrequest"
     return _render_core_react_page(request, active_page, "requests", request_ui)
 
 
@@ -1110,26 +1420,413 @@ def request_action(request, pk, action):
         return redirect("core:request_list")
 
     request_obj = get_object_or_404(TblRequest, requestno=pk)
-    action_map = {
-        "verify": "DONE",
-        "reject": "REJECTED",
-        "backjob": "BACK JOB",
-    }
-    target_status = action_map.get(action)
-    if not target_status:
-        raise Http404("Unsupported action.")
+    current_status = str(request_obj.status or "").strip()
+    current_role = request.current_role
+    current_user = request.current_user
+    can_manage_operations = bool(request.current_permissions.get("can_request_operations"))
+    can_manage_approval = bool(request.current_permissions.get("can_request_approval"))
+    can_edit_verification_fields = bool(request.current_permissions.get("can_request_verification_fields"))
 
-    note = request.POST.get("note", "").strip()
+    def _is_superadmin_actor():
+        return current_role == ROLE_SUPERADMIN
+
+    def _is_assigned_approver_actor():
+        return _is_assigned_approver_for_request(current_user, request_obj)
+
+    def _is_executor_head_actor():
+        return _is_request_department_admin(current_user, current_role, request_obj)
+
+    def _personnel_is_valid_for_requested_department(name):
+        selected_name = str(name or "").strip()
+        if not selected_name or selected_name.upper() == "UNASSIGNED":
+            return False
+        requested_department = str(request_obj.requestdept or "").strip().lower()
+        allowed_personnel = set()
+        for item in TblPersonnel.objects.only("personnelname", "personneldept"):
+            dept = str(item.personneldept or "").strip().lower()
+            personnel_name = str(item.personnelname or "").strip()
+            if dept == requested_department and personnel_name:
+                allowed_personnel.add(personnel_name.lower())
+        return selected_name.lower() in allowed_personnel
+
     today = timezone.localdate()
-    request_obj.status = target_status
-    request_obj.dateupdated = today
-    request_obj.verifiedby = request.current_user.name
+
+    if action == "update":
+        selected_update_scope = str(request.POST.get("update_scope", "all") or "all").strip().lower()
+        if selected_update_scope not in {"all", "assignment", "verification"}:
+            selected_update_scope = "all"
+        is_assignment_scope = selected_update_scope in {"all", "assignment"}
+        is_verification_scope = selected_update_scope in {"all", "verification"}
+
+        if not (can_manage_operations or can_edit_verification_fields):
+            messages.error(request, "You do not have permission to update this request.")
+            return redirect("core:request_list")
+
+        selected_personnel = str(request.POST.get("personnel", "") or "").strip()
+        selected_status = str(request.POST.get("status", "") or "").strip()
+        selected_notes = str(request.POST.get("notes", "") or "").strip()
+        selected_findings = str(request.POST.get("findings", "") or "").strip()
+        selected_verified_note = str(request.POST.get("verifiednote", "") or "").strip()
+        selected_dateneeded = str(request.POST.get("dateneeded", "") or "").strip()
+
+        if not can_edit_verification_fields and (selected_findings or selected_verified_note):
+            messages.error(request, "Only admin or super admin can edit findings and verifier notes.")
+            return redirect("core:request_list")
+
+        if not selected_status:
+            messages.error(request, "Status is required.")
+            return redirect("core:request_list")
+
+        target_status = _canonical_status(selected_status[:50])
+        current_is_pending = _is_pending_approval_status(current_status)
+        current_is_approved = _is_approved_status(current_status)
+        current_is_on_going = _is_on_going_status(current_status)
+        current_is_verification = _is_verification_status(current_status)
+        current_is_back_job = _is_back_job_status(current_status)
+        current_is_closed = _is_closed_status(current_status)
+        current_is_rejected = _is_rejected_status(current_status)
+        existing_personnel = str(request_obj.personnel or "").strip()
+        existing_notes = str(request_obj.notes or "").strip()
+        existing_schedule = str(request_obj.dateneeded or "").strip()
+        pending_resolution_status = ""
+        if current_is_pending:
+            if _is_approved_status(selected_findings):
+                pending_resolution_status = STATUS_APPROVED
+            elif _is_rejected_status(selected_findings):
+                pending_resolution_status = STATUS_REJECTED
+            elif _is_approved_status(target_status):
+                pending_resolution_status = STATUS_APPROVED
+            elif _is_rejected_status(target_status):
+                pending_resolution_status = STATUS_REJECTED
+        force_superadmin_pending_assignment = (
+            current_is_pending
+            and is_assignment_scope
+            and _is_superadmin_actor()
+            and (_is_on_going_status(target_status) or _is_verification_status(target_status))
+        )
+        superadmin_findings_status = ""
+        if _is_superadmin_actor() and selected_findings:
+            mapped_superadmin_status = _canonical_status(selected_findings[:50])
+            if mapped_superadmin_status in {
+                STATUS_APPROVED,
+                STATUS_ON_GOING,
+                STATUS_FOR_VERIFICATION,
+                STATUS_BACK_JOB,
+                STATUS_CLOSED,
+                STATUS_REJECTED,
+            }:
+                superadmin_findings_status = mapped_superadmin_status
+
+        if not is_assignment_scope:
+            if not can_edit_verification_fields:
+                messages.error(request, "You do not have permission to update verification details.")
+                return redirect("core:request_list")
+            if current_is_closed or current_is_rejected:
+                messages.error(request, "Closed or rejected requests can no longer be updated.")
+                return redirect("core:request_list")
+            if superadmin_findings_status:
+                request_obj.status = superadmin_findings_status
+                request_obj.findings = selected_findings[:50]
+            elif current_is_pending:
+                if not can_manage_approval:
+                    messages.error(request, "Only admin or super admin can process this approval.")
+                    return redirect("core:request_list")
+                if not pending_resolution_status:
+                    messages.error(request, "For pending approval, set Findings to APPROVED or REJECTED then Save Verification.")
+                    return redirect("core:request_list")
+                request_obj.status = pending_resolution_status
+                request_obj.findings = "APPROVED" if _status_equals(request_obj.status, STATUS_APPROVED) else STATUS_REJECTED
+            elif selected_findings:
+                request_obj.findings = selected_findings[:50]
+            request_obj.verifiednote = selected_verified_note[:100]
+            request_obj.dateupdated = today
+            if _status_equals(request_obj.status, STATUS_CLOSED):
+                request_obj.verifiedby = str(current_user.name or "").strip()[:50]
+                request_obj.verifieddate = today
+            request_obj.save()
+            messages.success(request, f"Request #{request_obj.requestno} updated.")
+            return redirect("core:request_list")
+
+        if not can_manage_operations:
+            if selected_personnel and selected_personnel != existing_personnel:
+                messages.error(request, "You do not have permission to edit personnel.")
+                return redirect("core:request_list")
+            if selected_dateneeded and selected_dateneeded != existing_schedule:
+                messages.error(request, "You do not have permission to edit scheduled date.")
+                return redirect("core:request_list")
+            if selected_notes and selected_notes != existing_notes:
+                messages.error(request, "You do not have permission to edit notes.")
+                return redirect("core:request_list")
+            if selected_status and not _status_equals(selected_status, current_status) and not (
+                current_is_pending and can_manage_approval and pending_resolution_status
+            ):
+                messages.error(request, "You do not have permission to edit status.")
+                return redirect("core:request_list")
+            if not (current_is_pending and can_manage_approval):
+                request_obj.dateupdated = today
+                if can_edit_verification_fields:
+                    if selected_findings:
+                        request_obj.findings = selected_findings[:50]
+                    request_obj.verifiednote = selected_verified_note[:100]
+                request_obj.save()
+                messages.success(request, f"Request #{request_obj.requestno} updated.")
+                return redirect("core:request_list")
+
+        effective_personnel = selected_personnel or existing_personnel
+        effective_notes = selected_notes or existing_notes
+        effective_schedule = selected_dateneeded or existing_schedule
+
+        requires_complete_details = (
+            current_is_approved
+            or current_is_back_job
+            or current_is_on_going
+            or current_is_verification
+            or force_superadmin_pending_assignment
+            or (
+                not current_is_pending
+                and (
+                    _is_on_going_status(target_status)
+                    or _is_verification_status(target_status)
+                    or _is_back_job_status(target_status)
+                    or _is_closed_status(target_status)
+                    or _is_rejected_status(target_status)
+                )
+            )
+        )
+
+        if current_is_closed or current_is_rejected:
+            messages.error(request, "Closed or rejected requests can no longer be updated.")
+            return redirect("core:request_list")
+
+        if current_is_pending and can_manage_operations and not can_manage_approval:
+            messages.error(request, "Admin or super admin must approve this request before personnel assignment.")
+            return redirect("core:request_list")
+
+        if current_is_pending and is_assignment_scope and not force_superadmin_pending_assignment:
+            messages.error(request, "Pending approval requests cannot be assigned yet.")
+            return redirect("core:request_list")
+
+        if requires_complete_details:
+            if not _personnel_is_valid_for_requested_department(effective_personnel):
+                messages.error(request, "Please assign personnel first before saving status.")
+                return redirect("core:request_list")
+            if not effective_schedule:
+                messages.error(request, "Please set the scheduled date first before saving status.")
+                return redirect("core:request_list")
+            if not effective_notes:
+                messages.error(request, "Please fill out the work details in Notes before saving status.")
+                return redirect("core:request_list")
+
+        if current_is_pending:
+            if force_superadmin_pending_assignment:
+                try:
+                    request_obj.dateneeded = date.fromisoformat(effective_schedule)
+                except ValueError:
+                    messages.error(request, "Scheduled date is invalid.")
+                    return redirect("core:request_list")
+                request_obj.personnel = effective_personnel[:50]
+                if _is_verification_status(target_status):
+                    request_obj.status = STATUS_FOR_VERIFICATION
+                    request_obj.findings = STATUS_FOR_VERIFICATION
+                else:
+                    request_obj.status = STATUS_ON_GOING
+                    request_obj.findings = STATUS_ON_GOING
+            else:
+                if not can_manage_approval:
+                    messages.error(request, "Only admin or super admin can process this approval.")
+                    return redirect("core:request_list")
+                if not pending_resolution_status:
+                    messages.error(request, "For pending approval, set Findings to APPROVED or REJECTED then Save Status.")
+                    return redirect("core:request_list")
+                request_obj.status = pending_resolution_status
+                request_obj.findings = "APPROVED" if _status_equals(request_obj.status, STATUS_APPROVED) else STATUS_REJECTED
+        elif current_is_approved or current_is_back_job:
+            if not (_is_superadmin_actor() or _is_executor_head_actor() or _is_assigned_approver_actor()):
+                messages.error(request, "Only admin/super admin or the assigned approver can assign and schedule this work.")
+                return redirect("core:request_list")
+            if not (_status_equals(target_status, STATUS_ON_GOING) or _status_equals(target_status, current_status)):
+                messages.error(request, "Approved or back job requests can only move to ON GOING.")
+                return redirect("core:request_list")
+            if not _personnel_is_valid_for_requested_department(effective_personnel):
+                messages.error(request, "Assigned personnel is required and must belong to the requested department.")
+                return redirect("core:request_list")
+            if not effective_schedule:
+                messages.error(request, "Scheduled date is required before saving this work request.")
+                return redirect("core:request_list")
+            if not effective_notes:
+                messages.error(request, "Please complete the work details in Notes before saving.")
+                return redirect("core:request_list")
+            try:
+                request_obj.dateneeded = date.fromisoformat(effective_schedule)
+            except ValueError:
+                messages.error(request, "Scheduled date is invalid.")
+                return redirect("core:request_list")
+            request_obj.personnel = effective_personnel[:50]
+            if _status_equals(target_status, STATUS_ON_GOING):
+                request_obj.status = STATUS_ON_GOING
+                request_obj.findings = STATUS_ON_GOING
+        elif current_is_on_going:
+            if not (_is_superadmin_actor() or _is_executor_head_actor() or _is_assigned_approver_actor()):
+                messages.error(request, "Only admin/super admin or the assigned approver can update this on-going request.")
+                return redirect("core:request_list")
+            if not (_status_equals(target_status, STATUS_ON_GOING) or _status_equals(target_status, STATUS_FOR_VERIFICATION)):
+                messages.error(request, "On-going requests can only stay ON GOING or move to FOR VERIFICATION.")
+                return redirect("core:request_list")
+            if not _personnel_is_valid_for_requested_department(effective_personnel):
+                messages.error(request, "A valid assigned personnel is required.")
+                return redirect("core:request_list")
+            if not effective_schedule:
+                messages.error(request, "Scheduled date is required before saving this work request.")
+                return redirect("core:request_list")
+            if not effective_notes:
+                messages.error(request, "Please complete the work details in Notes before saving.")
+                return redirect("core:request_list")
+            try:
+                request_obj.dateneeded = date.fromisoformat(effective_schedule)
+            except ValueError:
+                messages.error(request, "Scheduled date is invalid.")
+                return redirect("core:request_list")
+            request_obj.personnel = effective_personnel[:50]
+            if _status_equals(target_status, STATUS_FOR_VERIFICATION):
+                request_obj.status = STATUS_FOR_VERIFICATION
+                request_obj.findings = STATUS_FOR_VERIFICATION
+            else:
+                request_obj.status = STATUS_ON_GOING
+                request_obj.findings = STATUS_ON_GOING
+        elif current_is_verification:
+            if not can_manage_approval:
+                messages.error(request, "Only admin or super admin can close this verification request.")
+                return redirect("core:request_list")
+            if not (_status_equals(target_status, STATUS_FOR_VERIFICATION) or _status_equals(target_status, STATUS_CLOSED)):
+                messages.error(request, "Verification stage can only stay FOR VERIFICATION or be closed by admin/super admin.")
+                return redirect("core:request_list")
+            if not _personnel_is_valid_for_requested_department(effective_personnel):
+                messages.error(request, "Assigned personnel is required before saving this verification request.")
+                return redirect("core:request_list")
+            if not effective_schedule:
+                messages.error(request, "Scheduled date is required before saving this verification request.")
+                return redirect("core:request_list")
+            if not effective_notes:
+                messages.error(request, "Please complete the work details in Notes before saving.")
+                return redirect("core:request_list")
+            try:
+                request_obj.dateneeded = date.fromisoformat(effective_schedule)
+            except ValueError:
+                messages.error(request, "Scheduled date is invalid.")
+                return redirect("core:request_list")
+            request_obj.personnel = effective_personnel[:50]
+            request_obj.status = STATUS_CLOSED if _status_equals(target_status, STATUS_CLOSED) else STATUS_FOR_VERIFICATION
+            if _status_equals(request_obj.status, STATUS_CLOSED):
+                request_obj.findings = STATUS_CLOSED
+        else:
+            messages.error(request, "Unsupported request status transition.")
+            return redirect("core:request_list")
+
+        # Free-form notes can still be updated within the allowed stage transition.
+        request_obj.notes = selected_notes[:200]
+        if can_edit_verification_fields and is_verification_scope:
+            if selected_findings and not request_obj.findings:
+                request_obj.findings = selected_findings[:50]
+            request_obj.verifiednote = selected_verified_note[:100]
+        request_obj.dateupdated = today
+        if can_edit_verification_fields and _status_equals(request_obj.status, STATUS_CLOSED):
+            request_obj.verifiedby = str(current_user.name or "").strip()[:50]
+            request_obj.verifieddate = today
+        request_obj.save()
+        messages.success(request, f"Request #{request_obj.requestno} updated.")
+        return redirect("core:request_list")
+
+    if action == "approve":
+        if not _is_pending_approval_status(current_status):
+            messages.error(request, "Only pending approval requests can be approved.")
+            return redirect("core:request_list")
+        if not can_manage_approval:
+            messages.error(request, "Only admin or super admin can approve this request.")
+            return redirect("core:request_list")
+        request_obj.status = STATUS_APPROVED
+        request_obj.findings = "APPROVED"
+        request_obj.dateupdated = today
+        request_obj.save(update_fields=["status", "findings", "dateupdated"])
+        messages.success(request, f"Request #{request_obj.requestno} approved.")
+        return redirect("core:request_list")
+
+    if action == "reject":
+        if not _is_pending_approval_status(current_status):
+            messages.error(request, "Only pending approval requests can be rejected.")
+            return redirect("core:request_list")
+        if not can_manage_approval:
+            messages.error(request, "Only admin or super admin can reject this request.")
+            return redirect("core:request_list")
+        request_obj.status = STATUS_REJECTED
+        request_obj.findings = STATUS_REJECTED
+        request_obj.dateupdated = today
+        request_obj.save(update_fields=["status", "findings", "dateupdated"])
+        messages.success(request, f"Request #{request_obj.requestno} rejected.")
+        return redirect("core:request_list")
+
+    raise Http404("Unsupported action.")
+
+
+@superadmin_required
+def request_user_verify(request, pk):
+    if request.method != "POST":
+        return redirect("core:request_my")
+    if request.current_role != ROLE_USER:
+        messages.error(request, "Only requestors can verify their requests.")
+        return redirect("core:request_list")
+
+    request_obj = get_object_or_404(TblRequest, requestno=pk)
+    current_name = (request.current_user.name or "").strip().lower()
+    current_login = (request.current_user.username or "").strip().lower()
+    owner_name = (request_obj.requestor or "").strip().lower()
+    if owner_name not in {current_name, current_login}:
+        messages.error(request, "You can only verify your own request.")
+        return redirect("core:request_my")
+
+    if _status_category(request_obj.status) != "verification":
+        messages.error(request, "Only requests under FOR VERIFICATION can be marked as closed.")
+        return redirect("core:request_my")
+
+    today = timezone.localdate()
+    request_obj.status = STATUS_CLOSED
+    request_obj.findings = "VERIFIED"
+    request_obj.verifiedby = str(request.current_user.name or request.current_user.username or "").strip()[:50]
     request_obj.verifieddate = today
-    if note:
-        request_obj.verifiednote = note[:100]
-    request_obj.save()
-    messages.success(request, f"Request #{request_obj.requestno} marked as {target_status}.")
-    return redirect("core:request_list")
+    request_obj.dateupdated = today
+    request_obj.save(update_fields=["status", "findings", "verifiedby", "verifieddate", "dateupdated"])
+    messages.success(request, f"Request #{request_obj.requestno} verified and marked as CLOSED.")
+    return redirect("core:request_my")
+
+
+@superadmin_required
+def request_user_backjob(request, pk):
+    if request.method != "POST":
+        return redirect("core:request_my")
+    if request.current_role != ROLE_USER:
+        messages.error(request, "Only requestors can submit back job requests.")
+        return redirect("core:request_list")
+
+    request_obj = get_object_or_404(TblRequest, requestno=pk)
+    current_name = (request.current_user.name or "").strip().lower()
+    current_login = (request.current_user.username or "").strip().lower()
+    owner_name = (request_obj.requestor or "").strip().lower()
+    if owner_name not in {current_name, current_login}:
+        messages.error(request, "You can only update your own request.")
+        return redirect("core:request_my")
+
+    if _status_category(request_obj.status) != "verification":
+        messages.error(request, "Only requests under FOR VERIFICATION can be returned as BACK JOB.")
+        return redirect("core:request_my")
+
+    today = timezone.localdate()
+    request_obj.status = STATUS_BACK_JOB
+    request_obj.findings = STATUS_BACK_JOB
+    request_obj.verifiedby = str(request.current_user.name or request.current_user.username or "").strip()[:50]
+    request_obj.verifieddate = today
+    request_obj.dateupdated = today
+    request_obj.save(update_fields=["status", "findings", "verifiedby", "verifieddate", "dateupdated"])
+    messages.success(request, f"Request #{request_obj.requestno} returned as BACK JOB.")
+    return redirect("core:request_my")
 
 
 @superadmin_required

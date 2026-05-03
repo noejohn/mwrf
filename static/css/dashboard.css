@@ -613,6 +613,10 @@ textarea.form-control {
     align-items: start;
 }
 
+.user-request-bottom-grid.my-request-grid {
+    grid-template-columns: 1fr 1fr;
+}
+
 .user-readonly-card {
     border: 1px solid #415247;
     background: #222527;
@@ -837,7 +841,7 @@ textarea.form-control {
 
 .preview-grid {
     display: grid;
-    grid-template-columns: 1.2fr 1fr 1fr;
+    grid-template-columns: 1.1fr 1fr 1.45fr;
     border-top: 1px solid #455046;
 }
 
@@ -846,6 +850,7 @@ textarea.form-control {
     border-right: 1px dashed #525d56;
     color: #e7e7e7;
     min-height: 216px;
+    min-width: 0;
 }
 
 .preview-col:last-child {
@@ -895,6 +900,30 @@ textarea.form-control {
 .verifier-grid label {
     color: #f1f1f1;
     font-weight: 700;
+}
+
+.verifier-sections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.verifier-panel {
+    border: 1px solid rgba(120, 146, 135, 0.25);
+    border-radius: 8px;
+    padding: 10px;
+    background: rgba(10, 20, 28, 0.28);
+    min-width: 0;
+}
+
+.verifier-sections .verifier-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    align-items: stretch;
+}
+
+.verifier-sections .verifier-grid label {
+    margin-top: 4px;
 }
 
 .preview-input {
@@ -1078,6 +1107,10 @@ textarea.form-control {
 
     .preview-col:last-child {
         border-bottom: none;
+    }
+
+    .verifier-sections {
+        grid-template-columns: 1fr;
     }
 }
 

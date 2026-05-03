@@ -12,6 +12,45 @@ from .models import (
 )
 from .security import hash_password, verify_user_password
 
+STATUS_PENDING_APPROVAL = "PENDING APPROVAL"
+
+
+def _is_admin_position(value):
+    normalized = "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+    if "super" in normalized and "admin" in normalized:
+        return True
+    return "admin" in normalized
+
+
+def _is_superadmin_position(value):
+    normalized = "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+    return "super" in normalized and "admin" in normalized
+
+
+def _active_admin_choices(selected_department=""):
+    selected_department_text = str(selected_department or "").strip().lower()
+    choices = []
+    seen = set()
+    users = TblUsers.objects.order_by("name").only("name", "userdepartment", "userposition", "userstatus")
+
+    for item in users:
+        if not _is_admin_position(item.userposition):
+            continue
+        if str(item.userstatus or "").strip().upper() != "ACTIVE":
+            continue
+        name = str(item.name or "").strip()
+        if not name:
+            continue
+        department = str(item.userdepartment or "").strip().lower()
+        if selected_department_text and department != selected_department_text:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        choices.append((name, name))
+    return choices
+
 
 class BaseStyledModelForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
@@ -60,6 +99,17 @@ class UserForm(BaseStyledModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        dept_choices = [("", "Select Department")] + [
+            (name, name) for name in TblDepartment.objects.order_by("depname").values_list("depname", flat=True)
+        ]
+        current_department = str(getattr(self.instance, "userdepartment", "") or "").strip()
+        if current_department and all(current_department != value for value, _ in dept_choices):
+            dept_choices.append((current_department, current_department))
+        self.fields["userdepartment"] = forms.ChoiceField(
+            choices=dept_choices,
+            required=True,
+            widget=forms.Select(attrs={"class": "form-control"}),
+        )
         self.fields["userdepartment"].label = "Department"
         self.fields["useraddress"].label = "Address"
         self.fields["usercontact"].label = "Contact"
@@ -177,10 +227,55 @@ class StatusForm(BaseStyledModelForm):
 class ApprovalForm(BaseStyledModelForm):
     class Meta:
         model = TblApproval
-        fields = ["approvalname"]
+        fields = ["approvalname", "approvaldept"]
         labels = {
             "approvalname": "Approving Person",
+            "approvaldept": "Department",
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        dept_choices = [("", "Select Department")] + [
+            (name, name) for name in TblDepartment.objects.order_by("depname").values_list("depname", flat=True)
+        ]
+        selected_department = ""
+        if self.is_bound:
+            selected_department = str(self.data.get("approvaldept", "")).strip()
+        if not selected_department:
+            selected_department = str(self.initial.get("approvaldept", "")).strip()
+        current_department = str(getattr(self.instance, "approvaldept", "") or "").strip()
+        if current_department and all(current_department != value for value, _ in dept_choices):
+            dept_choices.append((current_department, current_department))
+        self.fields["approvaldept"] = forms.ChoiceField(
+            choices=dept_choices,
+            required=True,
+            widget=forms.Select(attrs={"class": "form-control"}),
+        )
+        self.fields["approvaldept"].label = "Department"
+
+        approval_choices = [("", "Select Approving Person")] + _active_admin_choices(selected_department)
+        current_name = str(getattr(self.instance, "approvalname", "") or "").strip()
+        if current_name and all(current_name != value for value, _ in approval_choices):
+            approval_choices.append((current_name, current_name))
+        self.fields["approvalname"] = forms.ChoiceField(
+            choices=approval_choices,
+            required=True,
+            widget=forms.Select(attrs={"class": "form-control"}),
+        )
+        self.fields["approvalname"].label = "Approving Person"
+
+    def clean(self):
+        cleaned = super().clean()
+        selected_department = str(cleaned.get("approvaldept", "") or "").strip()
+        selected_approval = str(cleaned.get("approvalname", "") or "").strip()
+        if selected_department and selected_approval:
+            allowed = {name.lower() for name, _ in _active_admin_choices(selected_department)}
+            if selected_approval.lower() not in allowed:
+                self.add_error(
+                    "approvalname",
+                    "Selected approving person must be an active admin in the selected department.",
+                )
+        return cleaned
 
 
 class PersonnelForm(BaseStyledModelForm):
@@ -192,6 +287,21 @@ class PersonnelForm(BaseStyledModelForm):
             "personneldept": "Department",
             "personneldesig": "Designation",
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        dept_choices = [("", "Select Department")] + [
+            (name, name) for name in TblDepartment.objects.order_by("depname").values_list("depname", flat=True)
+        ]
+        current_department = str(getattr(self.instance, "personneldept", "") or "").strip()
+        if current_department and all(current_department != value for value, _ in dept_choices):
+            dept_choices.append((current_department, current_department))
+        self.fields["personneldept"] = forms.ChoiceField(
+            choices=dept_choices,
+            required=True,
+            widget=forms.Select(attrs={"class": "form-control"}),
+        )
+        self.fields["personneldept"].label = "Department"
 
 
 class RequestForm(BaseStyledModelForm):
@@ -266,9 +376,29 @@ class UserRequestForm(BaseStyledModelForm):
         work_type_choices = [("", "Select Work Type")] + [
             (name, name) for name in TblWorkType.objects.order_by("worktype").values_list("worktype", flat=True)
         ]
-        approval_choices = [("", "Select Approving Person")] + [
-            (name, name) for name in TblApproval.objects.order_by("approvalname").values_list("approvalname", flat=True)
-        ]
+        selected_approval_department = ""
+        if self.is_bound:
+            selected_approval_department = str(self.data.get("requestdept", "")).strip()
+        if not selected_approval_department:
+            selected_approval_department = str(self.initial.get("requestdept", "")).strip()
+        if not selected_approval_department and self.current_user:
+            selected_approval_department = str(self.current_user.userdepartment or "").strip()
+
+        approval_choices = [("", "Select Approving Person")]
+        seen_approvers = set()
+        approvers_qs = TblApproval.objects.order_by("approvalname").only("approvalname", "approvaldept")
+        for item in approvers_qs:
+            item_dept = str(item.approvaldept or "").strip()
+            if selected_approval_department and item_dept.lower() != selected_approval_department.lower():
+                continue
+            admin_name = str(item.approvalname or "").strip()
+            if not admin_name:
+                continue
+            key = admin_name.lower()
+            if key in seen_approvers:
+                continue
+            seen_approvers.add(key)
+            approval_choices.append((admin_name, admin_name))
         personnel_choices = [("", "Select Personnel")] + [
             (name, name) for name in TblPersonnel.objects.order_by("personnelname").values_list("personnelname", flat=True)
         ]
@@ -277,6 +407,8 @@ class UserRequestForm(BaseStyledModelForm):
         ]
         if ("NEW", "NEW") not in status_choices:
             status_choices.append(("NEW", "NEW"))
+        if (STATUS_PENDING_APPROVAL, STATUS_PENDING_APPROVAL) not in status_choices:
+            status_choices.append((STATUS_PENDING_APPROVAL, STATUS_PENDING_APPROVAL))
 
         self.fields["department"] = forms.ChoiceField(choices=dept_choices, required=True, widget=forms.Select())
         self.fields["requestdept"] = forms.ChoiceField(choices=dept_choices, required=True, widget=forms.Select())
@@ -299,10 +431,38 @@ class UserRequestForm(BaseStyledModelForm):
         if self.current_user:
             self.initial.setdefault("requestor", self.current_user.name)
             self.initial.setdefault("department", self.current_user.userdepartment)
-            self.initial.setdefault("status", "NEW")
+            self.initial.setdefault("status", STATUS_PENDING_APPROVAL)
             self.fields["requestor"].widget.attrs["readonly"] = True
+            self.fields["department"].disabled = True
+            # Requester can only view request status/verifier sections.
+            self.fields["personnel"].disabled = True
+            self.fields["status"].disabled = True
+            self.fields["findings"].disabled = True
+            self.fields["notes"].widget.attrs["readonly"] = True
+            self.fields["dateupdated"].widget.attrs["readonly"] = True
+            self.fields["verifiedby"].widget.attrs["readonly"] = True
+            self.fields["verifiednote"].widget.attrs["readonly"] = True
+            self.fields["verifieddate"].widget.attrs["readonly"] = True
 
         self.fields["consent"].widget.attrs.pop("class", None)
+
+    def clean(self):
+        cleaned = super().clean()
+        selected_request_dept = str(cleaned.get("requestdept", "")).strip()
+        selected_approval = str(cleaned.get("approval", "")).strip()
+        if selected_request_dept and selected_approval:
+            allowed = set()
+            approvers_qs = TblApproval.objects.order_by("approvalname").only("approvalname", "approvaldept")
+            for item in approvers_qs:
+                item_dept = str(item.approvaldept or "").strip()
+                if item_dept.lower() != selected_request_dept.lower():
+                    continue
+                admin_name = str(item.approvalname or "").strip()
+                if admin_name:
+                    allowed.add(admin_name.lower())
+            if selected_approval.lower() not in allowed:
+                self.add_error("approval", "Selected approving person must be listed in Approval for the selected requested department.")
+        return cleaned
 
 
 class UserProfileForm(BaseStyledModelForm):

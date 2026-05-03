@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
+    <link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v={% now 'U' %}">
 </head>
 <body>
     {{ shell_ui|json_script:"shell-ui-data" }}
@@ -19,7 +19,7 @@
     </script>
     <div id="coreReactRoot"></div>
 
-    <script type="module" src="{% static 'vite/assets/core_app.js' %}"></script>
+    <script type="module" src="{% static 'vite/assets/core_app.js' %}?v={% now 'U' %}"></script>
 </body>
 </html>
 

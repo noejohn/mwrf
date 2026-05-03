@@ -87,7 +87,7 @@ window.ReactDOM = ReactDOMClient;
             { label: "NEW", value: data.counts.new, tone: "blue" },
             { label: "ON-GOING", value: data.counts.on_going, tone: "yellow" },
             { label: "FOR VERIFICATION", value: data.counts.verification, tone: "green-dark" },
-            { label: "DONE", value: data.counts.done, tone: "green" },
+            { label: "CLOSED", value: data.counts.done, tone: "green" },
             { label: "REJECTED", value: data.counts.rejected, tone: "red" },
         ];
 
@@ -186,6 +186,58 @@ window.ReactDOM = ReactDOMClient;
         const isWorkTypeEntity = data.entity === "work-types";
         const isApprovalEntity = data.entity === "approvals";
         const isStatusEntity = data.entity === "statuses";
+        const formFieldsByName = React.useMemo(() => {
+            const map = {};
+            (data.formFields || []).forEach((field) => {
+                if (!field || !field.name) return;
+                map[field.name] = field;
+            });
+            return map;
+        }, [data.formFields]);
+        const approvalDeptField = formFieldsByName.approvaldept || null;
+        const approvalNameField = formFieldsByName.approvalname || null;
+        const approvalDeptOptions = data.approvalDeptOptions || [];
+        const approvalAdminsByDepartment = data.approvalAdminsByDepartment || {};
+        const [selectedApprovalDept, setSelectedApprovalDept] = React.useState(data.selectedApprovalDept || "");
+        const [selectedApprovalName, setSelectedApprovalName] = React.useState(data.selectedApprovalName || "");
+
+        React.useEffect(() => {
+            setSelectedApprovalDept(data.selectedApprovalDept || "");
+            setSelectedApprovalName(data.selectedApprovalName || "");
+        }, [data.selectedApprovalDept, data.selectedApprovalName]);
+
+        function normalizeDepartment(value) {
+            return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+        }
+
+        function getApprovalOptionsByDepartment(department) {
+            const direct = approvalAdminsByDepartment[department];
+            if (Array.isArray(direct)) {
+                return direct;
+            }
+            const target = normalizeDepartment(department);
+            const matchedKey = Object.keys(approvalAdminsByDepartment).find(
+                (key) => normalizeDepartment(key) === target
+            );
+            return matchedKey ? (approvalAdminsByDepartment[matchedKey] || []) : [];
+        }
+
+        const filteredApprovalOptions = isApprovalEntity
+            ? getApprovalOptionsByDepartment(selectedApprovalDept)
+            : [];
+        const approvalOptions = [...filteredApprovalOptions];
+        if (isApprovalEntity && selectedApprovalName && !approvalOptions.includes(selectedApprovalName)) {
+            approvalOptions.unshift(selectedApprovalName);
+        }
+
+        function onApprovalDepartmentChange(event) {
+            const nextDepartment = event.target.value;
+            const nextOptions = getApprovalOptionsByDepartment(nextDepartment);
+            const keepCurrent = nextOptions.includes(selectedApprovalName);
+            setSelectedApprovalDept(nextDepartment);
+            setSelectedApprovalName(keepCurrent ? selectedApprovalName : "");
+        }
+
         const formTitle = isUsersEntity
             ? (data.editing ? "Update User Account" : "Create User Account")
             : isPersonnelEntity
@@ -207,12 +259,52 @@ window.ReactDOM = ReactDOMClient;
                 <h3>{formTitle}</h3>
                 <form method="post" encType="multipart/form-data" className="crud-form">
                     <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                    {isApprovalEntity ? (
+                        <>
+                            <label className="field-label">
+                                <span>{(approvalDeptField || {}).label || "Department"}</span>
+                                <select
+                                    name="approvaldept"
+                                    className="form-control"
+                                    value={selectedApprovalDept}
+                                    onChange={onApprovalDepartmentChange}
+                                >
+                                    {approvalDeptOptions.map((item) => (
+                                        <option key={`${item.value}-${item.label}`} value={item.value}>{item.label}</option>
+                                    ))}
+                                </select>
+                                <FieldErrors errors={(approvalDeptField || {}).errors || []} />
+                            </label>
+
+                            <label className="field-label">
+                                <span>{(approvalNameField || {}).label || "Approving Person"}</span>
+                                <select
+                                    name="approvalname"
+                                    className="form-control"
+                                    value={selectedApprovalName}
+                                    onChange={(event) => setSelectedApprovalName(event.target.value)}
+                                >
+                                    <option value="">Select Approving Person</option>
+                                    {approvalOptions.map((name) => (
+                                        <option key={name} value={name}>{name}</option>
+                                    ))}
+                                </select>
+                                <FieldErrors errors={(approvalNameField || {}).errors || []} />
+                            </label>
+                        </>
+                    ) : null}
                     {data.formFields.map((field, index) => (
                         <React.Fragment key={`${field.name}-${index}`}>
-                            {isUsersEntity && field.name === "username" ? (
-                                <h4 className="form-section-title">Create Login Account</h4>
-                            ) : null}
-                            {renderField(field, index)}
+                            {isApprovalEntity && (field.name === "approvalname" || field.name === "approvaldept")
+                                ? null
+                                : (
+                                    <>
+                                        {isUsersEntity && field.name === "username" ? (
+                                            <h4 className="form-section-title">Create Login Account</h4>
+                                        ) : null}
+                                        {renderField(field, index)}
+                                    </>
+                                )}
                         </React.Fragment>
                     ))}
                     <div className="form-actions">
@@ -353,111 +445,224 @@ window.ReactDOM = ReactDOMClient;
 
     function UserRequestMode({ data }) {
         const fields = data.formFieldsByName || {};
-        const ongoingRows = data.ongoingRecords || [];
+        const requestRows = data.records || [];
+        const userPageMode = String(data.userPageMode || "make");
+        const showMakePage = userPageMode === "make";
+        const showMyPage = userPageMode === "my";
+        const requestDeptOptions = data.requestDeptOptions || [];
+        const departmentApprovers = data.departmentApprovers || {};
+        const initialRequestedDept = data.selectedRequestedDept || "";
+        const initialApproval = data.selectedApproval || "";
+        const [requestedDept, setRequestedDept] = React.useState(initialRequestedDept);
+        const [approval, setApproval] = React.useState(initialApproval);
+        const [selectedRequestNo, setSelectedRequestNo] = React.useState(
+            requestRows.length ? requestRows[0].requestno : null
+        );
+
+        React.useEffect(() => {
+            if (!requestRows.length) {
+                setSelectedRequestNo(null);
+                return;
+            }
+            const exists = requestRows.some((item) => item.requestno === selectedRequestNo);
+            if (!exists) {
+                setSelectedRequestNo(requestRows[0].requestno);
+            }
+        }, [requestRows, selectedRequestNo]);
+
+        const selectedRequest = requestRows.find((row) => row.requestno === selectedRequestNo) || null;
+
+        function normalizeDepartment(value) {
+            return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+        }
+
+        function isVerificationStatus(value) {
+            const normalized = String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            return (
+                normalized.includes("verification") ||
+                normalized.includes("forverification") ||
+                normalized.includes("verify") ||
+                normalized.includes("submit")
+            );
+        }
+
+        let approverOptions = departmentApprovers[requestedDept] || [];
+        if (!approverOptions.length && requestedDept) {
+            const target = normalizeDepartment(requestedDept);
+            const matchedKey = Object.keys(departmentApprovers).find(
+                (key) => normalizeDepartment(key) === target
+            );
+            if (matchedKey) {
+                approverOptions = departmentApprovers[matchedKey] || [];
+            }
+        }
+        const approvalValue = approverOptions.includes(approval) ? approval : "";
+
+        function onRequestDeptChange(event) {
+            setRequestedDept(event.target.value);
+            setApproval("");
+        }
+
+        function onFormReset() {
+            setRequestedDept(initialRequestedDept);
+            setApproval(initialApproval);
+        }
 
         return (
             <>
-                <section className="user-request-entry">
-                    <form method="post" encType="multipart/form-data" className="user-request-form">
-                        <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                {showMakePage ? (
+                    <section className="user-request-entry">
+                        <form method="post" encType="multipart/form-data" className="user-request-form" onReset={onFormReset}>
+                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
 
-                        <div className="user-request-head">
-                            <span>ID: WR-{data.nextRequestNo || "--"}</span>
-                            <strong>CREATE WORK REQUEST</strong>
-                        </div>
-
-                        <div className="user-request-top-grid">
-                            <div className="user-form-col">
-                                <label className="user-field">
-                                    <span>Date Requested</span>
-                                    <input type="text" className="preview-input" value={data.todayDate || "-"} readOnly />
-                                </label>
-                                <UserRequestField field={fields.requestor} label="Requestor" />
-                                <UserRequestField field={fields.department} label="Department" />
-                                <UserRequestField field={fields.requestdept} label="Requested Dept" />
+                            <div className="user-request-head">
+                                <span>ID: WR-{data.nextRequestNo || "--"}</span>
+                                <strong>CREATE WORK REQUEST</strong>
                             </div>
 
-                            <div className="user-form-col">
-                                <UserRequestField field={fields.machinegroup} label="Machine Group" />
-                                <UserRequestField field={fields.worktype} label="Type of Work" />
-                                <UserRequestField field={fields.approval} label="Approving Person" />
-                                <UserRequestField field={fields.dateneeded} label="Date Needed" />
+                            <div className="user-request-top-grid">
+                                <div className="user-form-col">
+                                    <label className="user-field">
+                                        <span>Date Requested</span>
+                                        <input type="text" className="preview-input" value={data.todayDate || "-"} readOnly />
+                                    </label>
+                                    <UserRequestField field={fields.requestor} label="Requestor" />
+                                    <UserRequestField field={fields.department} label="Department" />
+                                    <label className="user-field">
+                                        <span>Requested Dept</span>
+                                        <select className="form-control" name="requestdept" value={requestedDept} onChange={onRequestDeptChange}>
+                                            {requestDeptOptions.map((item) => (
+                                                <option key={`${item.value}-${item.label}`} value={item.value}>{item.label}</option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                    <FieldErrors errors={(fields.requestdept || {}).errors || []} />
+                                </div>
+
+                                <div className="user-form-col">
+                                    <UserRequestField field={fields.machinegroup} label="Machine Group" />
+                                    <UserRequestField field={fields.worktype} label="Type of Work" />
+                                    <label className="user-field">
+                                        <span>Approving Person</span>
+                                        <select
+                                            className="form-control"
+                                            name="approval"
+                                            value={approvalValue}
+                                            onChange={(event) => setApproval(event.target.value)}
+                                            disabled={!requestedDept}
+                                        >
+                                            {!requestedDept ? (
+                                                <option value="">Select Requested Dept first</option>
+                                            ) : (
+                                                <option value="">Select Approving Person</option>
+                                            )}
+                                            {approverOptions.map((name) => (
+                                                <option key={name} value={name}>{name}</option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                    <FieldErrors errors={(fields.approval || {}).errors || []} />
+                                    <UserRequestField field={fields.dateneeded} label="Date Needed" />
+                                </div>
+
+                                <div className="user-form-col">
+                                    <UserRequestField field={fields.description} label="Description" />
+                                    <UserRequestField field={fields.reference_file} label="Upload File for Reference" />
+                                </div>
                             </div>
 
-                            <div className="user-form-col">
-                                <UserRequestField field={fields.description} label="Description" />
-                                <UserRequestField field={fields.reference_file} label="Upload File for Reference" />
+                            <div className="user-request-bottom-grid">
+                                <section className="user-consent-card">
+                                    <label className="consent-line">
+                                        <span dangerouslySetInnerHTML={htmlContent((fields.consent || {}).widgetHtml)} />
+                                        <span>{(fields.consent || {}).label || ""}</span>
+                                    </label>
+                                    <FieldErrors errors={(fields.consent || {}).errors || []} />
+                                    <div className="user-request-actions">
+                                        <button type="submit" className="btn btn-primary">Proceed</button>
+                                        <button type="reset" className="btn">Clear</button>
+                                    </div>
+                                </section>
                             </div>
-                        </div>
+                        </form>
+                    </section>
+                ) : null}
 
-                        <div className="user-request-bottom-grid">
+                {showMyPage ? (
+                    <>
+                        <div className="user-request-bottom-grid my-request-grid">
                             <section className="user-readonly-card">
                                 <h4>REQUEST STATUS</h4>
-                                <UserRequestField field={fields.personnel} label="Personnel" />
-                                <UserRequestField field={fields.status} label="Status" />
-                                <UserRequestField field={fields.notes} label="Notes" />
-                                <UserRequestField field={fields.dateupdated} label="Date Updated" />
+                                <small>{selectedRequest ? `Request WR-${selectedRequest.requestno}` : "Select a request below"}</small>
+                                <p><b>Personnel:</b> <span>{selectedRequest ? selectedRequest.personnel : "-"}</span></p>
+                                <p><b>Status:</b> <span>{selectedRequest ? selectedRequest.status : "-"}</span></p>
+                                <p><b>Notes:</b> <span>{selectedRequest ? selectedRequest.notes : "-"}</span></p>
+                                <p><b>Date Updated:</b> <span>{selectedRequest ? selectedRequest.dateupdated : "-"}</span></p>
+                                {selectedRequest && isVerificationStatus(selectedRequest.status) ? (
+                                    <div className="row-actions">
+                                        <form method="post" action={buildUrl(data.urls.userVerifyTemplate, selectedRequest.requestno)} className="inline">
+                                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                            <button type="submit" className="btn btn-primary btn-mini">Verified & Close</button>
+                                        </form>
+                                        <form method="post" action={buildUrl(data.urls.userBackjobTemplate, selectedRequest.requestno)} className="inline">
+                                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                            <button type="submit" className="btn btn-danger btn-mini">Back Job</button>
+                                        </form>
+                                    </div>
+                                ) : null}
                             </section>
 
                             <section className="user-readonly-card">
                                 <h4>WORK REQUEST VERIFIER</h4>
-                                <UserRequestField field={fields.verifiedby} label="Verified by" />
-                                <UserRequestField field={fields.findings} label="Findings" />
-                                <UserRequestField field={fields.verifiednote} label="Notes" />
-                                <UserRequestField field={fields.verifieddate} label="Date Updated" />
-                            </section>
-
-                            <section className="user-consent-card">
-                                <label className="consent-line">
-                                    <span dangerouslySetInnerHTML={htmlContent((fields.consent || {}).widgetHtml)} />
-                                    <span>{(fields.consent || {}).label || ""}</span>
-                                </label>
-                                <FieldErrors errors={(fields.consent || {}).errors || []} />
-                                <div className="user-request-actions">
-                                    <button type="submit" className="btn btn-primary">Proceed</button>
-                                    <button type="reset" className="btn">Clear</button>
-                                </div>
+                                <small>{selectedRequest ? `Request WR-${selectedRequest.requestno}` : "Select a request below"}</small>
+                                <p><b>Verified by:</b> <span>{selectedRequest ? selectedRequest.verifiedby : "-"}</span></p>
+                                <p><b>Findings:</b> <span>{selectedRequest ? selectedRequest.findings : "-"}</span></p>
+                                <p><b>Verified Note:</b> <span>{selectedRequest ? selectedRequest.verifiednote : "-"}</span></p>
+                                <p><b>Date Verified:</b> <span>{selectedRequest ? selectedRequest.verifieddate : "-"}</span></p>
                             </section>
                         </div>
-                    </form>
-                </section>
 
-                <section className="user-ongoing-panel">
-                    <div className="user-ongoing-head">
-                        <h3>ONGOING REQUESTS</h3>
-                        <a href={data.urls.onGoingFilter} className="btn btn-mini">View On-going Page</a>
-                    </div>
-                    <div className="table-wrap">
-                        <table className="user-ongoing-table">
-                            <thead>
-                                <tr>
-                                    <th>REQUEST NO.</th>
-                                    <th>DATE REQUESTED</th>
-                                    <th>MACHINE GROUP</th>
-                                    <th>WORK TYPE</th>
-                                    <th>STATUS</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {ongoingRows.length === 0 ? (
-                                    <tr>
-                                        <td colSpan="5" className="empty">No ongoing requests.</td>
-                                    </tr>
-                                ) : (
-                                    ongoingRows.map((row) => (
-                                        <tr key={`ongoing-${row.requestno}`}>
-                                            <td><span className="request-link">WR-{row.requestno}</span></td>
-                                            <td>{row.requestdate}</td>
-                                            <td>{row.machinegroup}</td>
-                                            <td>{row.worktype}</td>
-                                            <td><span className="status-pill">{row.status}</span></td>
+                        <section className="user-ongoing-panel">
+                            <div className="user-ongoing-head">
+                                <h3>MY REQUESTS</h3>
+                            </div>
+                            <div className="table-wrap">
+                                <table className="user-ongoing-table">
+                                    <thead>
+                                        <tr>
+                                            <th>REQUEST NO.</th>
+                                            <th>DATE REQUESTED</th>
+                                            <th>MACHINE GROUP</th>
+                                            <th>WORK TYPE</th>
+                                            <th>STATUS</th>
                                         </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </section>
+                                    </thead>
+                                    <tbody>
+                                        {requestRows.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="5" className="empty">No requests found.</td>
+                                            </tr>
+                                        ) : (
+                                            requestRows.map((row) => (
+                                                <tr
+                                                    key={`my-request-${row.requestno}`}
+                                                    className={selectedRequestNo === row.requestno ? "request-row active" : "request-row"}
+                                                    onClick={() => setSelectedRequestNo(row.requestno)}
+                                                >
+                                                    <td><span className="request-link">WR-{row.requestno}</span></td>
+                                                    <td>{row.requestdate}</td>
+                                                    <td>{row.machinegroup}</td>
+                                                    <td>{row.worktype}</td>
+                                                    <td><span className="status-pill">{row.status}</span></td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </>
+                ) : null}
             </>
         );
     }
@@ -467,6 +672,25 @@ window.ReactDOM = ReactDOMClient;
             data.records.length ? data.records[0].requestno : null
         );
         const [deleteForm, setDeleteForm] = React.useState(null);
+        const [warningMessage, setWarningMessage] = React.useState("");
+        const personnelByDepartment = data.personnelByDepartment || {};
+        const statusOptions = data.requestStatusOptions || [];
+        const findingsOptions = data.findingsOptions || [];
+        const currentApproverName = data.currentApproverName || "";
+        const permissions = data.permissions || {};
+        const isSuperadminView = Boolean(data.isSuperadmin);
+        const canRequestAction = Boolean(permissions.canRequestAction);
+        const canRequestOperations = Boolean(permissions.canRequestOperations);
+        const canRequestApproval = Boolean(permissions.canRequestApproval);
+        const canRequestVerificationFields = Boolean(permissions.canRequestVerificationFields);
+        const workflowStatuses = data.workflowStatuses || {};
+        const statusPendingApproval = workflowStatuses.pendingApproval || "PENDING APPROVAL";
+        const statusApproved = workflowStatuses.approved || "APPROVED";
+        const statusOnGoing = workflowStatuses.onGoing || "ON GOING";
+        const statusForVerification = workflowStatuses.forVerification || "FOR VERIFICATION";
+        const statusBackJob = workflowStatuses.backJob || "BACK JOB";
+        const statusClosed = workflowStatuses.closed || "CLOSED";
+        const statusRejected = workflowStatuses.rejected || "REJECTED";
 
         React.useEffect(() => {
             if (!data.records.length) {
@@ -480,6 +704,229 @@ window.ReactDOM = ReactDOMClient;
         }, [data.records, selectedRequestNo]);
 
         const selected = data.records.find((row) => row.requestno === selectedRequestNo) || null;
+        const [selectedPersonnel, setSelectedPersonnel] = React.useState(selected ? (selected.personnel || "") : "");
+        const [selectedStatus, setSelectedStatus] = React.useState(selected ? (selected.status || "") : "");
+        const [selectedScheduleDate, setSelectedScheduleDate] = React.useState(selected ? (selected.dateneeded || "") : "");
+        const [selectedNotes, setSelectedNotes] = React.useState(selected ? (selected.notes || "") : "");
+        const [selectedFindings, setSelectedFindings] = React.useState(selected ? (selected.findings || "") : "");
+        const [selectedVerifiedNote, setSelectedVerifiedNote] = React.useState(selected ? (selected.verifiednote || "") : "");
+
+        React.useEffect(() => {
+            if (!selected) {
+                setSelectedPersonnel("");
+                setSelectedStatus("");
+                setSelectedScheduleDate("");
+                setSelectedNotes("");
+                setSelectedFindings("");
+                setSelectedVerifiedNote("");
+                return;
+            }
+            setSelectedPersonnel(selected.personnel || "");
+            setSelectedStatus(selected.status || "");
+            setSelectedScheduleDate(selected.dateneeded === "-" ? "" : (selected.dateneeded || ""));
+            setSelectedNotes(selected.notes === "-" ? "" : (selected.notes || ""));
+            setSelectedFindings(selected.findings === "-" ? "" : (selected.findings || ""));
+            setSelectedVerifiedNote(selected.verifiednote === "-" ? "" : (selected.verifiednote || ""));
+        }, [selectedRequestNo, selected]);
+
+        function normalizeDepartment(value) {
+            return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+        }
+
+        function getPersonnelOptionsByDepartment(department) {
+            const direct = personnelByDepartment[department];
+            if (Array.isArray(direct)) {
+                return direct;
+            }
+            const target = normalizeDepartment(department);
+            const matchedKey = Object.keys(personnelByDepartment).find(
+                (key) => normalizeDepartment(key) === target
+            );
+            return matchedKey ? (personnelByDepartment[matchedKey] || []) : [];
+        }
+
+        const personnelOptions = selected ? getPersonnelOptionsByDepartment(selected.requestdept) : [];
+        const personnelValue = personnelOptions.includes(selectedPersonnel) ? selectedPersonnel : "";
+        const statusValue = selectedStatus || "";
+        const findingsValue = selectedFindings || "";
+
+        function normalizeStatus(value) {
+            return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        }
+
+        function statusEquals(left, right) {
+            return normalizeStatus(left) === normalizeStatus(right);
+        }
+
+        function statusIsPending(value) {
+            const normalized = normalizeStatus(value);
+            return !normalized || normalized === "new" || normalized === "pendingapproval" || normalized === "pending";
+        }
+
+        function statusIsApproved(value) {
+            return statusEquals(value, statusApproved);
+        }
+
+        function statusIsOnGoing(value) {
+            const normalized = normalizeStatus(value);
+            return normalized === "ongoing" || statusEquals(value, statusOnGoing);
+        }
+
+        function statusIsForVerification(value) {
+            const normalized = normalizeStatus(value);
+            return normalized === "forverification" || normalized === "verification" || normalized.includes("verify");
+        }
+
+        function statusIsBackJob(value) {
+            return statusEquals(value, statusBackJob);
+        }
+
+        function statusIsClosedOrRejected(value) {
+            return statusEquals(value, statusClosed) || statusEquals(value, statusRejected) || normalizeStatus(value) === "done";
+        }
+
+        function configuredStatusMatch(value) {
+            const normalized = normalizeStatus(value);
+            if (!normalized) return "";
+            return statusOptions.find((item) => normalizeStatus(item) === normalized) || "";
+        }
+
+        function configuredStageOptions(values, currentStatus) {
+            const seen = new Set();
+            const resolved = [];
+            values.forEach((value) => {
+                const match = configuredStatusMatch(value);
+                if (!match) return;
+                const key = normalizeStatus(match);
+                if (!key || seen.has(key)) return;
+                seen.add(key);
+                resolved.push(match);
+            });
+            const currentValue = String(currentStatus || "").trim();
+            const currentKey = normalizeStatus(currentValue);
+            if (currentValue && currentKey && !seen.has(currentKey)) {
+                resolved.unshift(currentValue);
+            }
+            if (!resolved.length && statusOptions.length) {
+                return [...statusOptions];
+            }
+            return resolved;
+        }
+
+        function getStageStatusOptions(currentStatus) {
+            if (isSuperadminView && statusOptions.length) {
+                return configuredStageOptions(statusOptions, currentStatus);
+            }
+            if (statusIsPending(currentStatus)) {
+                return configuredStageOptions([statusApproved, statusRejected], currentStatus);
+            }
+            if (statusIsApproved(currentStatus)) {
+                return configuredStageOptions([statusApproved, statusOnGoing], currentStatus);
+            }
+            if (statusIsBackJob(currentStatus)) {
+                return configuredStageOptions([statusBackJob, statusOnGoing], currentStatus);
+            }
+            if (statusIsOnGoing(currentStatus)) {
+                return configuredStageOptions([statusOnGoing, statusForVerification], currentStatus);
+            }
+            if (statusIsForVerification(currentStatus)) {
+                return configuredStageOptions([statusForVerification, statusClosed], currentStatus);
+            }
+            if (statusIsClosedOrRejected(currentStatus)) {
+                return configuredStageOptions([currentStatus], currentStatus);
+            }
+            return configuredStageOptions(
+                [statusPendingApproval, statusApproved, statusOnGoing, statusForVerification, statusBackJob, statusClosed, statusRejected],
+                currentStatus
+            );
+        }
+
+        const allowedStatusOptions = selected ? getStageStatusOptions(selected.status || "") : statusOptions;
+        const safeStatusValue = allowedStatusOptions.includes(statusValue) ? statusValue : (allowedStatusOptions[0] || "");
+        const canEditSchedule = selected && (statusIsApproved(selected.status || "") || statusIsBackJob(selected.status || "") || statusIsOnGoing(selected.status || ""));
+        const isReadOnlyStatus = selected && statusIsClosedOrRejected(selected.status || "");
+        const awaitingAdminApproval = selected && statusIsPending(selected.status || "") && canRequestOperations && !canRequestApproval;
+        const canEditOperationalFields = canRequestOperations && !awaitingAdminApproval;
+
+        function requiresWorkDetails(currentStatus, targetStatus) {
+            if (statusIsApproved(currentStatus) || statusIsBackJob(currentStatus) || statusIsOnGoing(currentStatus) || statusIsForVerification(currentStatus)) {
+                return true;
+            }
+            if (
+                statusIsOnGoing(targetStatus) ||
+                statusIsForVerification(targetStatus) ||
+                statusIsBackJob(targetStatus) ||
+                statusIsClosedOrRejected(targetStatus)
+            ) {
+                return true;
+            }
+            return false;
+        }
+
+        function onSaveStatusSubmit(event) {
+            if (!selected) {
+                event.preventDefault();
+                setWarningMessage("Select a request first.");
+                return;
+            }
+            if (awaitingAdminApproval) {
+                event.preventDefault();
+                setWarningMessage("Admin or super admin must approve this request before personnel assignment.");
+                return;
+            }
+            if (!canRequestOperations) {
+                return;
+            }
+            if (isReadOnlyStatus) {
+                event.preventDefault();
+                setWarningMessage("Closed or rejected requests can no longer be updated.");
+                return;
+            }
+
+            const targetStatus = safeStatusValue || "";
+            const needsDetails = requiresWorkDetails(selected.status || "", targetStatus);
+            if (!needsDetails) {
+                return;
+            }
+
+            const assignedPersonnel = String(personnelValue || "").trim();
+            const scheduleDate = String(selectedScheduleDate || "").trim();
+            const workNotes = String(selectedNotes || "").trim();
+
+            if (!assignedPersonnel || assignedPersonnel.toUpperCase() === "UNASSIGNED") {
+                event.preventDefault();
+                setWarningMessage("Please assign personnel first before saving status.");
+                return;
+            }
+
+            if (!scheduleDate) {
+                event.preventDefault();
+                setWarningMessage("Please set the scheduled date first before saving status.");
+                return;
+            }
+
+            if (!workNotes) {
+                event.preventDefault();
+                setWarningMessage("Please fill out the work details in Notes before saving status.");
+            }
+        }
+
+        function onSaveVerificationSubmit(event) {
+            if (!selected) {
+                event.preventDefault();
+                setWarningMessage("Select a request first.");
+                return;
+            }
+            if (!canRequestVerificationFields) {
+                event.preventDefault();
+                setWarningMessage("You do not have permission to update verification details.");
+                return;
+            }
+            if (isReadOnlyStatus) {
+                event.preventDefault();
+                setWarningMessage("Closed or rejected requests can no longer be updated.");
+            }
+        }
 
         function onDeleteSubmit(event) {
             event.preventDefault();
@@ -488,6 +935,10 @@ window.ReactDOM = ReactDOMClient;
 
         function closeDeleteModal() {
             setDeleteForm(null);
+        }
+
+        function closeWarningModal() {
+            setWarningMessage("");
         }
 
         function confirmDelete() {
@@ -579,68 +1030,286 @@ window.ReactDOM = ReactDOMClient;
                         </div>
 
                         <div className="preview-col">
-                            {data.isDoneFilter ? (
-                                <>
-                                    <h4>WORK REQUEST VERIFIER</h4>
-                                    <div className="verifier-grid">
-                                        <label htmlFor="pv-verifiedby">Verified by</label>
-                                        <input id="pv-verifiedby" className="preview-input" value={selected ? selected.verifiedby : "-"} readOnly />
+                            <h4>REQUEST STATUS</h4>
+                            <p><b>Date Updated:</b> <span>{selected ? selected.dateupdated : "-"}</span></p>
+                            <p><b>Verified By:</b> <span>{selected ? selected.verifiedby : "-"}</span></p>
+                            <p><b>Verified Date:</b> <span>{selected ? selected.verifieddate : "-"}</span></p>
 
-                                        <label htmlFor="pv-findings">Findings</label>
-                                        <select id="pv-findings" className="preview-input" disabled value={selected ? selected.findings : "-"}>
-                                            <option value={selected ? selected.findings : "-"}>{selected ? selected.findings : "-"}</option>
-                                        </select>
+                            {canRequestAction ? (
+                                isSuperadminView && canRequestVerificationFields ? (
+                                    <div className="verifier-sections">
+                                        <form
+                                            method="post"
+                                            action={buildUrl(data.urls.updateTemplate, selected ? selected.requestno : 0)}
+                                            onSubmit={onSaveStatusSubmit}
+                                            className="verifier-panel"
+                                        >
+                                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                            <input type="hidden" name="update_scope" value="assignment" />
+                                            {!canEditOperationalFields ? (
+                                                <input type="hidden" name="status" value={selected ? (selected.status || "") : ""} />
+                                            ) : null}
+                                            <div className="verifier-grid">
+                                                {canEditOperationalFields ? (
+                                                    <>
+                                                        <label htmlFor="pv-schedule">Scheduled Date</label>
+                                                        <input
+                                                            id="pv-schedule"
+                                                            type="date"
+                                                            name="dateneeded"
+                                                            className="preview-input"
+                                                            value={selectedScheduleDate}
+                                                            onChange={(event) => setSelectedScheduleDate(event.target.value)}
+                                                            disabled={!selected || !canEditSchedule || isReadOnlyStatus}
+                                                        />
 
-                                        <label htmlFor="pv-verifiednote">Notes</label>
-                                        <textarea id="pv-verifiednote" className="preview-input notes-box" rows="3" value={selected ? selected.verifiednote : "-"} readOnly />
+                                                        <label htmlFor="pv-personnel">Personnel</label>
+                                                        <select
+                                                            id="pv-personnel"
+                                                            name="personnel"
+                                                            className="preview-input"
+                                                            value={personnelValue}
+                                                            onChange={(event) => setSelectedPersonnel(event.target.value)}
+                                                            disabled={!selected || isReadOnlyStatus}
+                                                        >
+                                                            <option value="">UNASSIGNED</option>
+                                                            {personnelOptions.map((name) => (
+                                                                <option key={name} value={name}>{name}</option>
+                                                            ))}
+                                                        </select>
 
-                                        <label htmlFor="pv-dateupdated">Date Updated</label>
-                                        <input id="pv-dateupdated" className="preview-input" value={selected ? selected.dateupdated : "-"} readOnly />
+                                                        <label htmlFor="pv-status">Status</label>
+                                                        <select
+                                                            id="pv-status"
+                                                            name="status"
+                                                            className="preview-input"
+                                                            value={safeStatusValue}
+                                                            onChange={(event) => setSelectedStatus(event.target.value)}
+                                                            disabled={!selected || isReadOnlyStatus}
+                                                        >
+                                                            <option value="">Select Status</option>
+                                                            {allowedStatusOptions.map((status) => (
+                                                                <option key={status} value={status}>{status}</option>
+                                                            ))}
+                                                        </select>
+
+                                                        <label htmlFor="pv-notes">Notes</label>
+                                                        <textarea
+                                                            id="pv-notes"
+                                                            name="notes"
+                                                            className="preview-input notes-box"
+                                                            rows="2"
+                                                            value={selectedNotes}
+                                                            onChange={(event) => setSelectedNotes(event.target.value)}
+                                                            disabled={!selected || isReadOnlyStatus}
+                                                        />
+                                                    </>
+                                                ) : null}
+
+                                                {awaitingAdminApproval ? (
+                                                    <>
+                                                        <label>Status</label>
+                                                        <input
+                                                            className="preview-input"
+                                                            value="Waiting for admin/superadmin approval"
+                                                            readOnly
+                                                        />
+                                                    </>
+                                                ) : null}
+                                            </div>
+                                            <div className="preview-actions">
+                                                <button type="submit" className="btn btn-mini" disabled={!selected || (canRequestOperations && isReadOnlyStatus) || awaitingAdminApproval}>Save Assignment</button>
+                                            </div>
+                                        </form>
+
+                                        <form
+                                            method="post"
+                                            action={buildUrl(data.urls.updateTemplate, selected ? selected.requestno : 0)}
+                                            onSubmit={onSaveVerificationSubmit}
+                                            className="verifier-panel"
+                                        >
+                                            <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                            <input type="hidden" name="update_scope" value="verification" />
+                                            <input type="hidden" name="status" value={safeStatusValue} />
+                                            <div className="verifier-grid">
+                                                <label htmlFor="pv-findings">Findings</label>
+                                                <select
+                                                    id="pv-findings"
+                                                    name="findings"
+                                                    className="preview-input"
+                                                    value={findingsValue}
+                                                    onChange={(event) => setSelectedFindings(event.target.value)}
+                                                    disabled={!selected || isReadOnlyStatus}
+                                                >
+                                                    <option value="">Select Findings</option>
+                                                    {findingsOptions.map((item) => (
+                                                        <option key={item} value={item}>{item}</option>
+                                                    ))}
+                                                </select>
+
+                                                <label htmlFor="pv-verifiednote">Verified Note</label>
+                                                <textarea
+                                                    id="pv-verifiednote"
+                                                    name="verifiednote"
+                                                    className="preview-input notes-box"
+                                                    rows="2"
+                                                    value={selectedVerifiedNote}
+                                                    onChange={(event) => setSelectedVerifiedNote(event.target.value)}
+                                                    disabled={!selected || isReadOnlyStatus}
+                                                />
+
+                                                <label htmlFor="pv-auto-verifiedby">Verified By</label>
+                                                <input
+                                                    id="pv-auto-verifiedby"
+                                                    className="preview-input"
+                                                    value={currentApproverName || "-"}
+                                                    readOnly
+                                                />
+                                            </div>
+                                            <div className="preview-actions">
+                                                <button type="submit" className="btn btn-mini" disabled={!selected || isReadOnlyStatus}>Save Verification</button>
+                                            </div>
+                                        </form>
                                     </div>
-                                </>
+                                ) : (
+                                <form method="post" action={buildUrl(data.urls.updateTemplate, selected ? selected.requestno : 0)} onSubmit={onSaveStatusSubmit}>
+                                    <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                    <input type="hidden" name="update_scope" value="all" />
+                                    {!canEditOperationalFields ? (
+                                        <input type="hidden" name="status" value={selected ? (selected.status || "") : ""} />
+                                    ) : null}
+                                    <div className="verifier-grid">
+                                        {canEditOperationalFields ? (
+                                            <>
+                                                <label htmlFor="pv-schedule">Scheduled Date</label>
+                                                <input
+                                                    id="pv-schedule"
+                                                    type="date"
+                                                    name="dateneeded"
+                                                    className="preview-input"
+                                                    value={selectedScheduleDate}
+                                                    onChange={(event) => setSelectedScheduleDate(event.target.value)}
+                                                    disabled={!selected || !canEditSchedule || isReadOnlyStatus}
+                                                />
+
+                                                <label htmlFor="pv-personnel">Personnel</label>
+                                                <select
+                                                    id="pv-personnel"
+                                                    name="personnel"
+                                                    className="preview-input"
+                                                    value={personnelValue}
+                                                    onChange={(event) => setSelectedPersonnel(event.target.value)}
+                                                    disabled={!selected || isReadOnlyStatus}
+                                                >
+                                                    <option value="">UNASSIGNED</option>
+                                                    {personnelOptions.map((name) => (
+                                                        <option key={name} value={name}>{name}</option>
+                                                    ))}
+                                                </select>
+
+                                                <label htmlFor="pv-status">Status</label>
+                                                <select
+                                                    id="pv-status"
+                                                    name="status"
+                                                    className="preview-input"
+                                                    value={safeStatusValue}
+                                                    onChange={(event) => setSelectedStatus(event.target.value)}
+                                                    disabled={!selected || isReadOnlyStatus}
+                                                >
+                                                    <option value="">Select Status</option>
+                                                    {allowedStatusOptions.map((status) => (
+                                                        <option key={status} value={status}>{status}</option>
+                                                    ))}
+                                                </select>
+
+                                                <label htmlFor="pv-notes">Notes</label>
+                                                <textarea
+                                                    id="pv-notes"
+                                                    name="notes"
+                                                    className="preview-input notes-box"
+                                                    rows="2"
+                                                    value={selectedNotes}
+                                                    onChange={(event) => setSelectedNotes(event.target.value)}
+                                                    disabled={!selected || isReadOnlyStatus}
+                                                />
+                                            </>
+                                        ) : null}
+
+                                        {awaitingAdminApproval ? (
+                                            <>
+                                                <label>Status</label>
+                                                <input
+                                                    className="preview-input"
+                                                    value="Waiting for admin/superadmin approval"
+                                                    readOnly
+                                                />
+                                            </>
+                                        ) : null}
+
+                                        {canRequestVerificationFields ? (
+                                            <>
+                                                <label htmlFor="pv-findings">Findings</label>
+                                                <select
+                                                    id="pv-findings"
+                                                    name="findings"
+                                                    className="preview-input"
+                                                    value={findingsValue}
+                                                    onChange={(event) => setSelectedFindings(event.target.value)}
+                                                    disabled={!selected || isReadOnlyStatus}
+                                                >
+                                                    <option value="">Select Findings</option>
+                                                    {findingsOptions.map((item) => (
+                                                        <option key={item} value={item}>{item}</option>
+                                                    ))}
+                                                </select>
+
+                                                <label htmlFor="pv-verifiednote">Verified Note</label>
+                                                <textarea
+                                                    id="pv-verifiednote"
+                                                    name="verifiednote"
+                                                    className="preview-input notes-box"
+                                                    rows="2"
+                                                    value={selectedVerifiedNote}
+                                                    onChange={(event) => setSelectedVerifiedNote(event.target.value)}
+                                                    disabled={!selected || isReadOnlyStatus}
+                                                />
+
+                                                <label htmlFor="pv-auto-verifiedby">Verified By</label>
+                                                <input
+                                                    id="pv-auto-verifiedby"
+                                                    className="preview-input"
+                                                    value={currentApproverName || "-"}
+                                                    readOnly
+                                                />
+                                            </>
+                                        ) : null}
+                                    </div>
+                                    <div className="preview-actions">
+                                        <button type="submit" className="btn btn-mini" disabled={!selected || (canRequestOperations && isReadOnlyStatus) || awaitingAdminApproval}>Save Status</button>
+                                    </div>
+                                </form>
+                                )
                             ) : (
                                 <>
-                                    <h4>REQUEST STATUS</h4>
                                     <p><b>Personnel:</b> <span>{selected ? selected.personnel : "-"}</span></p>
                                     <p><b>Status:</b> <span>{selected ? selected.status : "-"}</span></p>
                                     <p><b>Notes:</b> <span>{selected ? selected.notes : "-"}</span></p>
-                                    <p><b>Date Updated:</b> <span>{selected ? selected.dateupdated : "-"}</span></p>
-                                    <p><b>Verified By:</b> <span>{selected ? selected.verifiedby : "-"}</span></p>
                                     <p><b>Findings:</b> <span>{selected ? selected.findings : "-"}</span></p>
                                     <p><b>Verified Note:</b> <span>{selected ? selected.verifiednote : "-"}</span></p>
-
-                                    {data.permissions.canRequestAction || data.permissions.canRequestDelete ? (
-                                        <div className="preview-actions">
-                                            {data.permissions.canRequestAction ? (
-                                                <>
-                                                    <form method="post" action={buildUrl(data.urls.verifyTemplate, selected ? selected.requestno : 0)}>
-                                                        <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
-                                                        <button type="submit" className="btn btn-mini" disabled={!selected}>Verify</button>
-                                                    </form>
-                                                    <form method="post" action={buildUrl(data.urls.rejectTemplate, selected ? selected.requestno : 0)}>
-                                                        <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
-                                                        <button type="submit" className="btn btn-mini" disabled={!selected}>Reject</button>
-                                                    </form>
-                                                    <form method="post" action={buildUrl(data.urls.backjobTemplate, selected ? selected.requestno : 0)}>
-                                                        <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
-                                                        <button type="submit" className="btn btn-mini" disabled={!selected}>Backjob</button>
-                                                    </form>
-                                                </>
-                                            ) : null}
-                                            {data.permissions.canRequestDelete ? (
-                                                <form
-                                                    method="post"
-                                                    action={buildUrl(data.urls.deleteTemplate, selected ? selected.requestno : 0)}
-                                                    onSubmit={onDeleteSubmit}
-                                                >
-                                                    <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
-                                                    <button type="submit" className="btn btn-mini btn-danger" disabled={!selected}>Delete</button>
-                                                </form>
-                                            ) : null}
-                                        </div>
-                                    ) : null}
                                 </>
                             )}
+                            {data.permissions.canRequestDelete ? (
+                                <div className="preview-actions">
+                                    <form
+                                        method="post"
+                                        action={buildUrl(data.urls.deleteTemplate, selected ? selected.requestno : 0)}
+                                        onSubmit={onDeleteSubmit}
+                                    >
+                                        <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
+                                        <button type="submit" className="btn btn-mini btn-danger" disabled={!selected}>Delete</button>
+                                    </form>
+                                </div>
+                            ) : null}
                         </div>
                     </div>
                 </section>
@@ -652,6 +1321,15 @@ window.ReactDOM = ReactDOMClient;
                     confirmClassName="btn btn-danger"
                     onCancel={closeDeleteModal}
                     onConfirm={confirmDelete}
+                />
+                <ConfirmDialog
+                    open={Boolean(warningMessage)}
+                    title="Incomplete Details"
+                    message={warningMessage}
+                    confirmLabel="OK"
+                    confirmClassName="btn btn-primary"
+                    onCancel={closeWarningModal}
+                    onConfirm={closeWarningModal}
                 />
             </>
         );
